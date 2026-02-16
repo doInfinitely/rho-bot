@@ -154,12 +154,56 @@ mod commands {
     #[tauri::command]
     pub async fn get_auth_state(
         settings: State<'_, Arc<tokio::sync::Mutex<AppSettings>>>,
+        handle: State<'_, Arc<AgentHandle>>,
     ) -> Result<Value, String> {
         let s = settings.lock().await;
+        if !s.is_logged_in() {
+            return Ok(serde_json::json!({
+                "logged_in": false,
+                "email": "",
+                "server_url": s.server_url,
+            }));
+        }
+
+        // Validate the stored token against the server to catch expired JWTs
+        let url = format!("{}/api/me", s.server_url.trim_end_matches('/'));
+        let token = s.auth_token.clone();
+        let email = s.user_email.clone();
+        let server_url = s.server_url.clone();
+        drop(s); // release the lock before the network call
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await;
+
+        let valid = match resp {
+            Ok(r) => r.status().is_success(),
+            Err(_) => true, // network error → assume valid so offline use works
+        };
+
+        if !valid {
+            // Token expired or invalid — clear credentials
+            log::info!("Stored token is no longer valid, clearing auth state");
+            let mut s = settings.lock().await;
+            s.auth_token = String::new();
+            s.user_email = String::new();
+            let _ = s.save();
+            handle.update_settings(s.clone()).await;
+
+            return Ok(serde_json::json!({
+                "logged_in": false,
+                "email": "",
+                "server_url": server_url,
+            }));
+        }
+
         Ok(serde_json::json!({
-            "logged_in": s.is_logged_in(),
-            "email": s.user_email,
-            "server_url": s.server_url,
+            "logged_in": true,
+            "email": email,
+            "server_url": server_url,
         }))
     }
 
