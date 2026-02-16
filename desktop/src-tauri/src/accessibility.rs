@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use core_foundation::base::{CFRelease, TCFType};
+    use core_foundation::base::{CFRelease, CFRetain, TCFType};
     use core_foundation::string::{CFString, CFStringRef};
     use serde_json::{json, Value};
     use std::ffi::c_void;
@@ -26,6 +26,7 @@ mod macos {
             attribute: CFStringRef,
             value: *mut *const c_void,
         ) -> AXError;
+        fn AXIsProcessTrusted() -> bool;
     }
 
     fn get_string_attr(element: AXUIElementRef, attr: &str) -> Option<String> {
@@ -52,7 +53,6 @@ mod macos {
             return vec![];
         }
 
-        // Interpret as CFArray by reading count and elements directly
         extern "C" {
             fn CFArrayGetCount(array: *const c_void) -> isize;
             fn CFArrayGetValueAtIndex(array: *const c_void, idx: isize) -> *const c_void;
@@ -63,11 +63,13 @@ mod macos {
         for i in 0..count {
             let child = unsafe { CFArrayGetValueAtIndex(value, i) };
             if !child.is_null() {
+                // CFArrayGetValueAtIndex returns a non-owning reference.
+                // Retain each child so it survives the array release.
+                unsafe { CFRetain(child) };
                 children.push(child as AXUIElementRef);
             }
         }
-        // We do NOT release individual children (they're owned by the array),
-        // but we do release the array itself.
+        // Now safe to release the array — children are independently retained.
         unsafe { CFRelease(value) };
         children
     }
@@ -82,9 +84,15 @@ mod macos {
         let description = get_string_attr(element, "AXDescription").unwrap_or_default();
         let value_str = get_string_attr(element, "AXValue").unwrap_or_default();
 
-        let children: Vec<Value> = get_children(element)
-            .into_iter()
-            .map(|c| walk_element(c, depth + 1))
+        let child_refs = get_children(element);
+        let children: Vec<Value> = child_refs
+            .iter()
+            .map(|c| {
+                let result = walk_element(*c, depth + 1);
+                // Release the retained child now that we're done with it.
+                unsafe { CFRelease(*c) };
+                result
+            })
             .collect();
 
         let mut node = json!({
@@ -117,6 +125,11 @@ mod macos {
 
     /// Read the accessibility tree of the frontmost application.
     pub fn read_frontmost_tree() -> Value {
+        // Check accessibility permission first
+        if !unsafe { AXIsProcessTrusted() } {
+            return json!({"error": "Accessibility permission not granted"});
+        }
+
         // Use osascript to get the PID of the frontmost app.
         let output = std::process::Command::new("osascript")
             .arg("-e")
@@ -124,12 +137,16 @@ mod macos {
             .output();
 
         match output {
-            Ok(o) => {
+            Ok(o) if o.status.success() => {
                 let pid_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
                 match pid_str.parse::<i32>() {
                     Ok(pid) => read_accessibility_tree(pid),
                     Err(_) => json!({"error": "Could not parse frontmost PID"}),
                 }
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                json!({"error": format!("osascript failed: {}", stderr)})
             }
             Err(e) => json!({"error": format!("osascript failed: {}", e)}),
         }
