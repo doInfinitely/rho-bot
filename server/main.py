@@ -20,7 +20,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ---- singletons initialised at startup ----
-model_service = ModelService(model_path=settings.model_path)
+model_service = ModelService(
+    inference_url=settings.model_inference_url,
+    model_path=settings.model_path,
+    device_override=settings.model_device,
+    encryption_key=settings.model_encryption_key,
+)
 context_service = ContextService(model_service=model_service)
 
 

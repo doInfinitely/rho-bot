@@ -13,8 +13,13 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rhobot"
 
-    # Model
+    # Model — remote inference (Railway → Modal)
+    model_inference_url: str = ""  # Modal endpoint URL; empty = stub noop mode
+
+    # Model — local inference (self-hosted / dev with GPU)
     model_path: str = ""
+    model_device: str = ""  # "" = auto-detect (CUDA > MPS > CPU), or e.g. "cpu", "cuda:0"
+    model_encryption_key: str = ""  # hex-encoded 32-byte AES-256 key; empty = unencrypted (dev)
 
     # Stripe
     stripe_secret_key: str = ""

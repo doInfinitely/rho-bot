@@ -11,7 +11,4 @@ pydantic-settings>=2.0.0
 python-multipart>=0.0.12
 httpx>=0.28.0
 stripe>=11.0.0
-torch>=2.0.0
-torchvision>=0.15.0
-Pillow>=10.0.0
 cryptography>=42.0.0
