@@ -43,10 +43,10 @@ async def subscription_info(
         return SubscriptionOut(
             id="",
             plan_id="free",
-            plan_name="Free",
+            plan_name="Free (Unlimited)",
             status="active",
             tasks_used=0,
-            tasks_limit=50,
+            tasks_limit=999_999_999,
         )
 
     return SubscriptionOut(

@@ -61,7 +61,7 @@ async def get_or_create_customer(
         stripe_customer_id=customer.id,
         plan_id="free",
         status="active",
-        tasks_limit=50,
+        tasks_limit=FREE_TASKS_LIMIT,
     )
     db.add(sub)
     await db.commit()
@@ -128,7 +128,7 @@ async def get_subscription(db: AsyncSession, user_id: str) -> Subscription | Non
 # Subscription statuses that permit usage
 _ACTIVE_STATUSES = {"active", "trialing"}
 
-FREE_TASKS_LIMIT = 50
+FREE_TASKS_LIMIT = 999_999_999  # uncapped for now
 
 
 async def get_or_create_subscription(db: AsyncSession, user_id: str) -> Subscription:
@@ -174,8 +174,8 @@ async def check_and_increment_quota(
             "Please update your payment method at https://rho.bot/dashboard/billing"
         )
 
-    # 2. Must be under the task quota
-    if sub.tasks_used >= sub.tasks_limit:
+    # 2. Must be under the task quota (free plan is uncapped for now)
+    if sub.plan_id != "free" and sub.tasks_used >= sub.tasks_limit:
         return False, (
             f"You've used all {sub.tasks_limit} tasks included in your "
             f"{sub.plan_id.title()} plan this period. "
