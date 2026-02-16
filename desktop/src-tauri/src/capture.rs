@@ -8,9 +8,26 @@ use base64::Engine as _;
 #[cfg(target_os = "macos")]
 use core_graphics::display::{kCGWindowListOptionOnScreenOnly, CGDisplay};
 
+#[cfg(target_os = "macos")]
+extern "C" {
+    /// Returns true if the app has Screen Recording permission.
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    /// Triggers the Screen Recording permission dialog if not yet decided.
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
 /// Capture the main display and return a base64-encoded PNG string.
 #[cfg(target_os = "macos")]
 pub fn capture_screen() -> Result<String, String> {
+    // Check Screen Recording permission before attempting capture.
+    // If not granted, request it (shows the system dialog) and return
+    // an empty string instead of trying to process a placeholder image.
+    let has_permission = unsafe { CGPreflightScreenCaptureAccess() };
+    if !has_permission {
+        unsafe { CGRequestScreenCaptureAccess() };
+        return Err("Screen Recording permission not granted. Enable it in System Settings > Privacy & Security > Screen Recording.".into());
+    }
+
     let display = CGDisplay::main();
     let cg_image = CGDisplay::screenshot(
         display.bounds(),
@@ -18,15 +35,38 @@ pub fn capture_screen() -> Result<String, String> {
         0, // kCGNullWindowID
         Default::default(),
     )
-    .ok_or_else(|| "Failed to capture screenshot".to_string())?;
+    .ok_or_else(|| "Failed to capture screenshot (CGDisplay::screenshot returned nil)".to_string())?;
 
     let width = cg_image.width() as u32;
     let height = cg_image.height() as u32;
     let bytes_per_row = cg_image.bytes_per_row();
+
+    if width == 0 || height == 0 {
+        return Err("Screenshot has zero dimensions".into());
+    }
+
     let raw_data = cg_image.data();
+    let actual_len = raw_data.bytes().len();
+    let expected_len = bytes_per_row * height as usize;
+
+    if actual_len < expected_len {
+        return Err(format!(
+            "Screenshot data too small: got {} bytes, expected {} ({}x{}, bpr={})",
+            actual_len, expected_len, width, height, bytes_per_row
+        ));
+    }
+
     let data_ptr = raw_data.bytes().as_ptr();
-    let data_len = (bytes_per_row * height as usize) as usize;
-    let pixel_data = unsafe { std::slice::from_raw_parts(data_ptr, data_len) };
+    let pixel_data = unsafe { std::slice::from_raw_parts(data_ptr, expected_len) };
+
+    // Verify that bytes_per_row can hold width*4 pixels
+    if bytes_per_row < (width as usize) * 4 {
+        return Err(format!(
+            "bytes_per_row ({}) < width*4 ({})",
+            bytes_per_row,
+            (width as usize) * 4
+        ));
+    }
 
     // CoreGraphics gives us BGRA; convert to RGBA for the `image` crate
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);

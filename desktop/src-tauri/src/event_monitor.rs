@@ -166,10 +166,20 @@ mod macos {
 
     pub fn start_event_monitor(buffer: Arc<EventBuffer>) {
         std::thread::spawn(move || {
+            // Check Accessibility permission first; if not trusted, skip
+            // the event tap entirely — it would fail and log an error anyway.
+            extern "C" {
+                fn AXIsProcessTrusted() -> bool;
+            }
+            if !unsafe { AXIsProcessTrusted() } {
+                log::warn!(
+                    "Accessibility permission not granted — event monitor disabled. \
+                     Grant access in System Settings > Privacy & Security > Accessibility."
+                );
+                return;
+            }
+
             // Build a dedicated small runtime for the event monitor thread.
-            // We avoid tokio::runtime::Handle::current() because the Tauri
-            // setup callback may run before the tokio runtime is "entered"
-            // on the main thread (macOS app delegate FFI boundary).
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -200,11 +210,19 @@ mod macos {
                     "Failed to create CGEventTap — \
                      grant Accessibility permission in System Settings"
                 );
+                // Reclaim the context to avoid leaking
+                unsafe { drop(Box::from_raw(ctx_ptr as *mut TapContext)) };
                 return;
             }
 
             unsafe {
                 let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+                if source.is_null() {
+                    log::error!("Failed to create run loop source for CGEventTap");
+                    CFRelease(tap);
+                    drop(Box::from_raw(ctx_ptr as *mut TapContext));
+                    return;
+                }
                 let run_loop = CFRunLoopGetCurrent();
                 CFRunLoopAddSource(run_loop, source, kCFRunLoopCommonModes);
                 CFRelease(source);
