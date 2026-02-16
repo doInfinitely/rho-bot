@@ -1,30 +1,24 @@
 import os
 import re
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
-def _resolve_database_url() -> str:
-    """Pick up the database URL from env, handling Railway's formats.
+def _normalize_database_url(raw: str) -> str:
+    """Normalize a database URL for asyncpg.
 
-    Railway provides ``DATABASE_URL`` (postgresql://…) automatically when a
-    Postgres plugin is attached.  We also accept ``RHOBOT_DATABASE_URL`` for
-    explicit overrides.  The URL is normalized to use the ``asyncpg`` driver.
+    - Converts ``postgres://`` or ``postgresql://`` to ``postgresql+asyncpg://``
+    - Fills in empty port with 5432
     """
-    raw = (
-        os.environ.get("RHOBOT_DATABASE_URL")
-        or os.environ.get("DATABASE_URL")
-        or ""
-    )
-
     if not raw:
         return "postgresql+asyncpg://postgres:postgres@localhost:5432/rhobot"
 
     # Normalize driver prefix for asyncpg
-    raw = re.sub(r"^postgres(ql)?://", "postgresql+asyncpg://", raw)
+    raw = re.sub(r"^postgres(ql)?(\+asyncpg)?://", "postgresql+asyncpg://", raw)
 
     # Fix empty port (e.g. "…@host:/db" → "…@host:5432/db")
-    raw = re.sub(r"@([^/:]+):(/)","@\\1:5432/", raw)
+    raw = re.sub(r"@([^/:]+):(/)", "@\\1:5432/", raw)
 
     return raw
 
@@ -38,8 +32,8 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 hours
 
-    # Database (resolved via helper to handle Railway's DATABASE_URL)
-    database_url: str = _resolve_database_url()
+    # Database
+    database_url: str = ""
 
     # Model — remote inference (Railway → Modal)
     model_inference_url: str = ""  # Modal endpoint URL; empty = stub noop mode
@@ -55,6 +49,16 @@ class Settings(BaseSettings):
     stripe_pro_price_id: str = ""
     stripe_team_price_id: str = ""
     frontend_url: str = "http://localhost:3000"
+
+    @model_validator(mode="after")
+    def _fix_database_url(self) -> "Settings":
+        """Normalize the database URL after pydantic-settings loads env vars.
+
+        Also picks up Railway's built-in DATABASE_URL as a fallback.
+        """
+        raw = self.database_url or os.environ.get("DATABASE_URL", "")
+        self.database_url = _normalize_database_url(raw)
+        return self
 
     class Config:
         env_file = ".env"
