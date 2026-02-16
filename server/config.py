@@ -1,4 +1,32 @@
+import os
+import re
+
 from pydantic_settings import BaseSettings
+
+
+def _resolve_database_url() -> str:
+    """Pick up the database URL from env, handling Railway's formats.
+
+    Railway provides ``DATABASE_URL`` (postgresql://…) automatically when a
+    Postgres plugin is attached.  We also accept ``RHOBOT_DATABASE_URL`` for
+    explicit overrides.  The URL is normalized to use the ``asyncpg`` driver.
+    """
+    raw = (
+        os.environ.get("RHOBOT_DATABASE_URL")
+        or os.environ.get("DATABASE_URL")
+        or ""
+    )
+
+    if not raw:
+        return "postgresql+asyncpg://postgres:postgres@localhost:5432/rhobot"
+
+    # Normalize driver prefix for asyncpg
+    raw = re.sub(r"^postgres(ql)?://", "postgresql+asyncpg://", raw)
+
+    # Fix empty port (e.g. "…@host:/db" → "…@host:5432/db")
+    raw = re.sub(r"@([^/:]+):(/)","@\\1:5432/", raw)
+
+    return raw
 
 
 class Settings(BaseSettings):
@@ -10,8 +38,8 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 hours
 
-    # Database
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rhobot"
+    # Database (resolved via helper to handle Railway's DATABASE_URL)
+    database_url: str = _resolve_database_url()
 
     # Model — remote inference (Railway → Modal)
     model_inference_url: str = ""  # Modal endpoint URL; empty = stub noop mode

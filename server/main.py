@@ -10,7 +10,8 @@ import sys
 # Emit diagnostics before any heavy imports so they show up even if an import crashes
 print(f"[rho-bot] Python {sys.version}", flush=True)
 print(f"[rho-bot] PORT={os.environ.get('PORT', '(not set)')}", flush=True)
-print(f"[rho-bot] DATABASE_URL set: {'RHOBOT_DATABASE_URL' in os.environ}", flush=True)
+print(f"[rho-bot] RHOBOT_DATABASE_URL set: {'RHOBOT_DATABASE_URL' in os.environ}", flush=True)
+print(f"[rho-bot] DATABASE_URL set: {'DATABASE_URL' in os.environ}", flush=True)
 print(f"[rho-bot] CWD: {os.getcwd()}", flush=True)
 
 from contextlib import asynccontextmanager
