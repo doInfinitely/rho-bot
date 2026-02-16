@@ -27,28 +27,50 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// Normalise server_url to an https:// REST base (strip trailing paths, fix scheme).
+    fn rest_base(&self) -> String {
+        let mut url = self.server_url.trim().trim_end_matches('/').to_string();
+
+        // If the user has a legacy ws:// or wss:// URL stored, convert it
+        if url.starts_with("wss://") {
+            url = url.replacen("wss://", "https://", 1);
+        } else if url.starts_with("ws://") {
+            url = url.replacen("ws://", "http://", 1);
+        }
+
+        // Strip any trailing /ws/agent or /ws/record path left from old settings
+        for suffix in &["/ws/agent", "/ws/record", "/ws"] {
+            if url.ends_with(suffix) {
+                url.truncate(url.len() - suffix.len());
+            }
+        }
+
+        // Ensure a scheme is present
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            url = format!("https://{}", url);
+        }
+
+        url
+    }
+
     /// Derive the WebSocket agent URL from the REST base URL.
     pub fn ws_agent_url(&self) -> String {
-        let base = self.server_url.trim_end_matches('/');
+        let base = self.rest_base();
         let ws_base = if base.starts_with("https://") {
             base.replacen("https://", "wss://", 1)
-        } else if base.starts_with("http://") {
-            base.replacen("http://", "ws://", 1)
         } else {
-            format!("wss://{}", base)
+            base.replacen("http://", "ws://", 1)
         };
         format!("{}/ws/agent", ws_base)
     }
 
     /// Derive the WebSocket record URL from the REST base URL.
     pub fn ws_record_url(&self) -> String {
-        let base = self.server_url.trim_end_matches('/');
+        let base = self.rest_base();
         let ws_base = if base.starts_with("https://") {
             base.replacen("https://", "wss://", 1)
-        } else if base.starts_with("http://") {
-            base.replacen("http://", "ws://", 1)
         } else {
-            format!("wss://{}", base)
+            base.replacen("http://", "ws://", 1)
         };
         format!("{}/ws/record", ws_base)
     }

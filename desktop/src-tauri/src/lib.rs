@@ -48,10 +48,9 @@ mod commands {
         handle: State<'_, Arc<AgentHandle>>,
         creds: AuthCredentials,
     ) -> Result<AuthResult, String> {
-        let base_url = {
-            let s = settings_state.lock().await;
-            creds.server_url.clone().unwrap_or_else(|| s.server_url.clone())
-        };
+        // Always use the production URL unless the user explicitly overrides
+        let default_url = "https://rho-bot-production.up.railway.app".to_string();
+        let base_url = creds.server_url.clone().unwrap_or(default_url.clone());
         let url = format!("{}/auth/login", base_url.trim_end_matches('/'));
 
         let client = reqwest::Client::new();
@@ -76,13 +75,11 @@ mod commands {
             .await
             .map_err(|e| format!("Invalid response: {}", e))?;
 
-        // Persist to settings
+        // Persist to settings — always update server_url to the correct REST base
         let mut settings = settings_state.lock().await;
         settings.auth_token = token_resp.access_token.clone();
         settings.user_email = creds.email.clone();
-        if let Some(ref url) = creds.server_url {
-            settings.server_url = url.clone();
-        }
+        settings.server_url = base_url;
         settings.save()?;
         handle.update_settings(settings.clone()).await;
 
@@ -98,10 +95,8 @@ mod commands {
         handle: State<'_, Arc<AgentHandle>>,
         creds: AuthCredentials,
     ) -> Result<AuthResult, String> {
-        let base_url = {
-            let s = settings_state.lock().await;
-            creds.server_url.clone().unwrap_or_else(|| s.server_url.clone())
-        };
+        let default_url = "https://rho-bot-production.up.railway.app".to_string();
+        let base_url = creds.server_url.clone().unwrap_or(default_url.clone());
         let url = format!("{}/auth/signup", base_url.trim_end_matches('/'));
 
         let client = reqwest::Client::new();
@@ -126,13 +121,11 @@ mod commands {
             .await
             .map_err(|e| format!("Invalid response: {}", e))?;
 
-        // Persist to settings
+        // Persist to settings — always update server_url to the correct REST base
         let mut settings = settings_state.lock().await;
         settings.auth_token = token_resp.access_token.clone();
         settings.user_email = creds.email.clone();
-        if let Some(ref url) = creds.server_url {
-            settings.server_url = url.clone();
-        }
+        settings.server_url = base_url;
         settings.save()?;
         handle.update_settings(settings.clone()).await;
 
