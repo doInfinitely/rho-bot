@@ -10,6 +10,7 @@ import {
   Settings,
   LogOut,
   Bot,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/sessions", label: "Sessions", icon: History },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
+  { href: "/download", label: "Download Agent", icon: Download },
 ];
 
 export default function DashboardLayout({
