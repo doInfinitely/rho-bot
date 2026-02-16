@@ -14,9 +14,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
+/// Maximum number of reconnect attempts before giving up.
+const MAX_RECONNECT_ATTEMPTS: u32 = 5;
+
 /// Shared handle the React frontend uses to control the agent.
 pub struct AgentHandle {
     state: Arc<Mutex<String>>,
+    last_error: Arc<Mutex<String>>,
     settings: Arc<Mutex<AppSettings>>,
     event_buffer: Arc<EventBuffer>,
     recent_actions: Arc<Mutex<Vec<Value>>>,
@@ -30,6 +34,7 @@ impl AgentHandle {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new("disconnected".into())),
+            last_error: Arc::new(Mutex::new(String::new())),
             settings: Arc::new(Mutex::new(AppSettings::default())),
             event_buffer: Arc::new(EventBuffer::new(100)),
             recent_actions: Arc::new(Mutex::new(Vec::new())),
@@ -44,6 +49,10 @@ impl AgentHandle {
         self.state.lock().await.clone()
     }
 
+    pub async fn last_error(&self) -> String {
+        self.last_error.lock().await.clone()
+    }
+
     pub async fn start(&self) -> Result<(), String> {
         let mut running = self.running.lock().await;
         if *running {
@@ -52,7 +61,11 @@ impl AgentHandle {
         *running = true;
         drop(running);
 
+        // Clear previous error
+        *self.last_error.lock().await = String::new();
+
         let state = self.state.clone();
+        let last_error = self.last_error.clone();
         let settings = self.settings.clone();
         let event_buffer = self.event_buffer.clone();
         let recent_actions = self.recent_actions.clone();
@@ -62,6 +75,7 @@ impl AgentHandle {
         tokio::spawn(async move {
             let result = run_agent_loop(
                 state.clone(),
+                last_error.clone(),
                 settings,
                 event_buffer,
                 recent_actions,
@@ -71,6 +85,7 @@ impl AgentHandle {
 
             if let Err(e) = result {
                 log::error!("Agent loop error: {}", e);
+                *last_error.lock().await = e;
             }
 
             *state.lock().await = "disconnected".into();
@@ -151,8 +166,16 @@ fn now() -> f64 {
         .as_secs_f64()
 }
 
+/// Check for stop signal without blocking.
+async fn should_stop(stop_signal: &Notify) -> bool {
+    tokio::time::timeout(std::time::Duration::from_millis(1), stop_signal.notified())
+        .await
+        .is_ok()
+}
+
 async fn run_agent_loop(
     state: Arc<Mutex<String>>,
+    last_error: Arc<Mutex<String>>,
     settings: Arc<Mutex<AppSettings>>,
     event_buffer: Arc<EventBuffer>,
     recent_actions: Arc<Mutex<Vec<Value>>>,
@@ -167,19 +190,48 @@ async fn run_agent_loop(
 
     log::info!("Agent connecting to {}", ws_url);
 
-    // Connect
-    *state.lock().await = "connected".into();
-    let mut client = WsClient::connect(&ws_url, &token).await?;
+    // ---- connect with retries ----
+    let mut client: Option<WsClient> = None;
+    let mut attempts: u32 = 0;
+
+    while attempts < MAX_RECONNECT_ATTEMPTS {
+        if should_stop(&stop_signal).await {
+            return Ok(());
+        }
+
+        *state.lock().await = format!("connecting (attempt {})", attempts + 1);
+
+        match WsClient::connect(&ws_url, &token).await {
+            Ok(c) => {
+                log::info!("WebSocket connected on attempt {}", attempts + 1);
+                client = Some(c);
+                break;
+            }
+            Err(e) => {
+                attempts += 1;
+                let msg = format!("Connect failed (attempt {}): {}", attempts, e);
+                log::warn!("{}", msg);
+                *last_error.lock().await = msg;
+
+                if attempts < MAX_RECONNECT_ATTEMPTS {
+                    let backoff = std::time::Duration::from_secs(2u64.pow(attempts.min(4)));
+                    tokio::time::sleep(backoff).await;
+                }
+            }
+        }
+    }
+
+    let mut client = client.ok_or_else(|| {
+        format!("Failed to connect after {} attempts to {}", MAX_RECONNECT_ATTEMPTS, ws_url)
+    })?;
+
     *state.lock().await = "running".into();
+    *last_error.lock().await = String::new();
 
     let mut consecutive_errors: u32 = 0;
 
     loop {
-        // Check for stop signal (non-blocking)
-        if tokio::time::timeout(std::time::Duration::from_millis(1), stop_signal.notified())
-            .await
-            .is_ok()
-        {
+        if should_stop(&stop_signal).await {
             break;
         }
 
@@ -213,16 +265,18 @@ async fn run_agent_loop(
             "window_bounds": {"x": wx, "y": wy, "width": ww, "height": wh}
         });
 
-        // 5. Send & receive
+        // 5. Send & receive (with one reconnect attempt on failure)
         match client.send_context(&context).await {
             Ok(action_json) => {
+                consecutive_errors = 0;
+
                 // 6. Check for server-side errors (quota exceeded, payment required)
                 if let Ok(action) = serde_json::from_value::<Action>(action_json.clone()) {
                     if let Some(ref error_msg) = action.error {
                         log::warn!("Server denied action: {}", error_msg);
                         *state.lock().await = "quota_exceeded".into();
+                        *last_error.lock().await = error_msg.clone();
 
-                        // Still log it so the UI can display the reason
                         let mut log = recent_actions.lock().await;
                         log.push(action_json);
                         break;
@@ -239,7 +293,6 @@ async fn run_agent_loop(
                 // 8. Log for the UI
                 let mut log = recent_actions.lock().await;
                 log.push(action_json);
-                // Keep only the last 50 entries
                 let len = log.len();
                 if len > 50 {
                     let drain_count = len - 50;
@@ -248,13 +301,36 @@ async fn run_agent_loop(
             }
             Err(e) => {
                 log::error!("Server communication failed: {}", e);
-                break;
+                *last_error.lock().await = e.clone();
+                consecutive_errors += 1;
+
+                // Try to reconnect once
+                log::info!("Attempting reconnect...");
+                *state.lock().await = "reconnecting".into();
+
+                match WsClient::connect(&ws_url, &token).await {
+                    Ok(new_client) => {
+                        log::info!("Reconnected successfully");
+                        client = new_client;
+                        *state.lock().await = "running".into();
+                        *last_error.lock().await = String::new();
+                        // Continue the loop — the context we failed to send is lost,
+                        // but we'll capture fresh data next iteration.
+                        continue;
+                    }
+                    Err(reconnect_err) => {
+                        let msg = format!("Reconnect also failed: {}. Original error: {}", reconnect_err, e);
+                        log::error!("{}", msg);
+                        *last_error.lock().await = msg.clone();
+                        return Err(msg);
+                    }
+                }
             }
         }
 
-        // 8. Sleep (back off if capture keeps failing)
+        // 9. Sleep (back off if capture keeps failing)
         let sleep_ms = if consecutive_errors > 5 {
-            interval.max(5000) // slow down to 5s if everything is failing
+            interval.max(5000)
         } else {
             interval
         };
@@ -286,11 +362,7 @@ async fn run_recording_loop(
     *state.lock().await = "recording".into();
 
     loop {
-        // Check for stop signal (non-blocking)
-        if tokio::time::timeout(std::time::Duration::from_millis(1), stop_signal.notified())
-            .await
-            .is_ok()
-        {
+        if should_stop(&stop_signal).await {
             break;
         }
 

@@ -181,8 +181,11 @@ mod commands {
     }
 
     #[tauri::command]
-    pub async fn get_agent_state(handle: State<'_, Arc<AgentHandle>>) -> Result<String, String> {
-        Ok(handle.state().await)
+    pub async fn get_agent_state(handle: State<'_, Arc<AgentHandle>>) -> Result<Value, String> {
+        Ok(serde_json::json!({
+            "state": handle.state().await,
+            "error": handle.last_error().await,
+        }))
     }
 
     #[tauri::command]

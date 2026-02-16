@@ -4,7 +4,9 @@ import type { AgentState } from "../App";
 
 const stateColors: Record<AgentState, string> = {
   disconnected: "bg-red-500",
+  connecting: "bg-yellow-400",
   connected: "bg-yellow-400",
+  reconnecting: "bg-yellow-400",
   running: "bg-emerald-400",
   recording: "bg-blue-400",
   paused: "bg-neutral-400",
@@ -13,7 +15,9 @@ const stateColors: Record<AgentState, string> = {
 
 const stateLabels: Record<AgentState, string> = {
   disconnected: "Disconnected",
+  connecting: "Connecting…",
   connected: "Connected (idle)",
+  reconnecting: "Reconnecting…",
   running: "Running",
   recording: "Recording",
   paused: "Paused",
@@ -25,7 +29,12 @@ interface Permissions {
   accessibility: boolean;
 }
 
-export default function StatusPanel({ state }: { state: AgentState }) {
+interface Props {
+  state: AgentState;
+  error?: string;
+}
+
+export default function StatusPanel({ state, error }: Props) {
   const [perms, setPerms] = useState<Permissions | null>(null);
 
   useEffect(() => {
@@ -71,7 +80,11 @@ export default function StatusPanel({ state }: { state: AgentState }) {
     }
   };
 
-  const busy = state === "running" || state === "recording";
+  const busy =
+    state === "running" ||
+    state === "recording" ||
+    state === "connecting" ||
+    state === "reconnecting";
   const missingPerms =
     perms && (!perms.screen_recording || !perms.accessibility);
 
@@ -108,10 +121,24 @@ export default function StatusPanel({ state }: { state: AgentState }) {
       {/* Status indicator */}
       <div className="flex items-center gap-3">
         <div
-          className={`w-3 h-3 rounded-full ${stateColors[state]} animate-pulse`}
+          className={`w-3 h-3 rounded-full ${stateColors[state]} ${
+            state === "connecting" || state === "reconnecting"
+              ? "animate-pulse"
+              : ""
+          }`}
         />
         <span className="text-sm font-medium">{stateLabels[state]}</span>
       </div>
+
+      {/* Error banner */}
+      {error && state !== "running" && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm space-y-1">
+          <p className="font-medium text-red-300">Error</p>
+          <p className="text-xs text-red-300/80 font-mono break-all">
+            {error}
+          </p>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="flex gap-2">

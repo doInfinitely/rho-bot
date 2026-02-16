@@ -5,7 +5,7 @@ import StatusPanel from "./components/StatusPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import ActivityLog from "./components/ActivityLog";
 
-export type AgentState = "disconnected" | "connected" | "running" | "recording" | "paused" | "quota_exceeded";
+export type AgentState = "disconnected" | "connected" | "connecting" | "reconnecting" | "running" | "recording" | "paused" | "quota_exceeded";
 
 export interface ActionEntry {
   id: string;
@@ -28,6 +28,7 @@ export default function App() {
 
   const [tab, setTab] = useState<"status" | "activity" | "settings">("status");
   const [agentState, setAgentState] = useState<AgentState>("disconnected");
+  const [agentError, setAgentError] = useState("");
   const [actions, setActions] = useState<ActionEntry[]>([]);
 
   // Check auth on mount
@@ -47,8 +48,15 @@ export default function App() {
 
     const interval = setInterval(async () => {
       try {
-        const state = await invoke<string>("get_agent_state");
-        setAgentState(state as AgentState);
+        const result = await invoke<{ state: string; error: string }>("get_agent_state");
+        // The state string may include detail like "connecting (attempt 2)" — normalise
+        const raw = result.state;
+        if (raw.startsWith("connecting")) {
+          setAgentState("connecting");
+        } else {
+          setAgentState(raw as AgentState);
+        }
+        setAgentError(result.error || "");
       } catch {
         // Tauri command not available yet
       }
@@ -140,7 +148,7 @@ export default function App() {
 
       {/* Content */}
       <div className="flex-1 p-4 overflow-auto">
-        {tab === "status" && <StatusPanel state={agentState} />}
+        {tab === "status" && <StatusPanel state={agentState} error={agentError} />}
         {tab === "activity" && <ActivityLog actions={actions} />}
         {tab === "settings" && <SettingsPanel />}
       </div>
