@@ -49,9 +49,14 @@ impl WsClient {
             Some(Ok(Message::Text(text))) => {
                 serde_json::from_str(&text).map_err(|e| format!("Parse error: {}", e))
             }
-            Some(Ok(Message::Close(_))) => Err("Server closed connection".into()),
+            Some(Ok(Message::Close(frame))) => {
+                let detail = frame
+                    .map(|f| format!("code={}, reason={}", f.code, f.reason))
+                    .unwrap_or_else(|| "no details".into());
+                Err(format!("Server closed connection ({})", detail))
+            }
             Some(Err(e)) => Err(format!("Read error: {}", e)),
-            None => Err("Connection closed".into()),
+            None => Err("Connection closed unexpectedly".into()),
             _ => Err("Unexpected message type".into()),
         }
     }

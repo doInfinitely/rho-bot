@@ -54,28 +54,47 @@ async def agent_ws(ws: WebSocket):
     try:
         while True:
             data = await ws.receive_json()
-            context = ContextPayload(**data)
 
-            async with async_session() as db:
-                # --- quota gate ---
-                allowed, reason = await check_and_increment_quota(db, user_id)
-                if not allowed:
-                    logger.info(
-                        "Quota denied for user %s: %s", user_id, reason
-                    )
-                    denied = ActionPayload(error=reason)
-                    await ws.send_json(denied.model_dump())
-                    continue
+            try:
+                context = ContextPayload(**data)
 
-                await context_service.ensure_session(context.session_id, user_id, db)
-                action = await context_service.process_context(context, user_id, db)
+                async with async_session() as db:
+                    # --- quota gate ---
+                    allowed, reason = await check_and_increment_quota(db, user_id)
+                    if not allowed:
+                        logger.info(
+                            "Quota denied for user %s: %s", user_id, reason
+                        )
+                        denied = ActionPayload(error=reason)
+                        await ws.send_json(denied.model_dump())
+                        continue
 
-            await ws.send_json(action.model_dump())
+                    await context_service.ensure_session(context.session_id, user_id, db)
+                    action = await context_service.process_context(context, user_id, db)
+
+                await ws.send_json(action.model_dump())
+            except Exception as inner_exc:
+                # Send the error back to the client instead of killing the connection.
+                logger.exception(
+                    "Error processing context for user %s: %s", user_id, inner_exc
+                )
+                error_action = ActionPayload(
+                    error=f"Server error: {type(inner_exc).__name__}: {inner_exc}"
+                )
+                try:
+                    await ws.send_json(error_action.model_dump())
+                except Exception:
+                    # Can't even send the error — bail out
+                    break
+
     except WebSocketDisconnect:
         logger.info("Agent WebSocket disconnected (user %s)", user_id)
     except Exception:
         logger.exception("Agent WebSocket error (user %s)", user_id)
-        await ws.close(code=1011)
+        try:
+            await ws.close(code=1011)
+        except Exception:
+            pass
 
 
 @router.websocket("/ws/record")
@@ -115,17 +134,36 @@ async def record_ws(ws: WebSocket):
     try:
         while True:
             data = await ws.receive_json()
-            training = TrainingPayload(**data)
 
-            async with async_session() as db:
-                await context_service.ensure_session(
-                    training.context.session_id, user_id, db
+            try:
+                training = TrainingPayload(**data)
+
+                async with async_session() as db:
+                    await context_service.ensure_session(
+                        training.context.session_id, user_id, db
+                    )
+                    await context_service.store_training_pair(training, user_id, db)
+
+                await ws.send_json({"status": "ok"})
+            except Exception as inner_exc:
+                logger.exception(
+                    "Error processing training data for user %s: %s",
+                    user_id,
+                    inner_exc,
                 )
-                await context_service.store_training_pair(training, user_id, db)
+                try:
+                    await ws.send_json({
+                        "status": "error",
+                        "detail": f"{type(inner_exc).__name__}: {inner_exc}",
+                    })
+                except Exception:
+                    break
 
-            await ws.send_json({"status": "ok"})
     except WebSocketDisconnect:
         logger.info("Recording WebSocket disconnected (user %s)", user_id)
     except Exception:
         logger.exception("Recording WebSocket error (user %s)", user_id)
-        await ws.close(code=1011)
+        try:
+            await ws.close(code=1011)
+        except Exception:
+            pass

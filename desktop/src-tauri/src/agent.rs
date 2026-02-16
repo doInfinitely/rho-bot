@@ -270,22 +270,30 @@ async fn run_agent_loop(
             Ok(action_json) => {
                 consecutive_errors = 0;
 
-                // 6. Check for server-side errors (quota exceeded, payment required)
+                // 6. Check for server-side errors
                 if let Ok(action) = serde_json::from_value::<Action>(action_json.clone()) {
                     if let Some(ref error_msg) = action.error {
-                        log::warn!("Server denied action: {}", error_msg);
-                        *state.lock().await = "quota_exceeded".into();
-                        *last_error.lock().await = error_msg.clone();
+                        if error_msg.starts_with("Server error:") {
+                            // Transient server error — log it but keep the loop going
+                            log::warn!("Server processing error (will retry): {}", error_msg);
+                            *last_error.lock().await = error_msg.clone();
+                            consecutive_errors += 1;
+                        } else {
+                            // Quota / billing error — stop the agent
+                            log::warn!("Server denied action: {}", error_msg);
+                            *state.lock().await = "quota_exceeded".into();
+                            *last_error.lock().await = error_msg.clone();
 
-                        let mut log = recent_actions.lock().await;
-                        log.push(action_json);
-                        break;
-                    }
-
-                    // 7. Execute
-                    if action.action_type != "noop" {
-                        if let Err(e) = executor::execute(&action) {
-                            log::error!("Action execution failed: {}", e);
+                            let mut log = recent_actions.lock().await;
+                            log.push(action_json);
+                            break;
+                        }
+                    } else {
+                        // 7. Execute
+                        if action.action_type != "noop" {
+                            if let Err(e) = executor::execute(&action) {
+                                log::error!("Action execution failed: {}", e);
+                            }
                         }
                     }
                 }
