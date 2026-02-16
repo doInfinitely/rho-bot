@@ -111,8 +111,22 @@ app.include_router(billing.router)
 
 @app.get("/health")
 async def health():
+    from server.models.database import async_session
+    from sqlalchemy import text
+
+    db_ok = False
+    db_error = ""
+    try:
+        async with async_session() as db:
+            await db.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception as exc:
+        db_error = f"{type(exc).__name__}: {exc}"
+
     return {
-        "status": "ok",
+        "status": "ok" if db_ok else "degraded",
         "database_url_set": settings.database_url != "postgresql+asyncpg://postgres:postgres@localhost:5432/rhobot",
+        "database_connected": db_ok,
+        "database_error": db_error or None,
         "inference_url_set": bool(settings.model_inference_url),
     }
