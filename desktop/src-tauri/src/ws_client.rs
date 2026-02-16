@@ -56,6 +56,23 @@ impl WsClient {
         }
     }
 
+    /// Send a training pair payload and wait for the server's acknowledgment.
+    pub async fn send_training_pair(&mut self, payload: &Value) -> Result<(), String> {
+        self.write
+            .send(Message::Text(payload.to_string()))
+            .await
+            .map_err(|e| format!("Send failed: {}", e))?;
+
+        // Wait for ack
+        match self.read.next().await {
+            Some(Ok(Message::Text(_))) => Ok(()),
+            Some(Ok(Message::Close(_))) => Err("Server closed connection".into()),
+            Some(Err(e)) => Err(format!("Read error: {}", e)),
+            None => Err("Connection closed".into()),
+            _ => Err("Unexpected message type".into()),
+        }
+    }
+
     /// Gracefully close the connection.
     pub async fn close(mut self) {
         let _ = self.write.send(Message::Close(None)).await;

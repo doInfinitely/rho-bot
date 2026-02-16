@@ -8,6 +8,7 @@ import {
   Brain,
   Layers,
   ArrowRight,
+  Download,
   Monitor,
   Bot,
   Target,
@@ -50,17 +51,18 @@ export default function HomePage() {
 
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
-              href="/signup"
+              href="/download"
               className="w-full sm:w-auto px-8 py-3.5 text-sm font-medium rounded-lg bg-rho-600 hover:bg-rho-700 transition-colors flex items-center justify-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Download App
+            </Link>
+            <Link
+              href="/signup"
+              className="w-full sm:w-auto px-8 py-3.5 text-sm font-medium rounded-lg border border-neutral-700 hover:border-neutral-600 text-neutral-300 hover:text-neutral-100 transition-colors flex items-center justify-center gap-2"
             >
               Get Started Free
               <ArrowRight className="w-4 h-4" />
-            </Link>
-            <Link
-              href="/pricing"
-              className="w-full sm:w-auto px-8 py-3.5 text-sm font-medium rounded-lg border border-neutral-700 hover:border-neutral-600 text-neutral-300 hover:text-neutral-100 transition-colors text-center"
-            >
-              View Pricing
             </Link>
           </div>
 
@@ -156,6 +158,7 @@ export default function HomePage() {
                 step: "01",
                 title: "Install the Agent",
                 desc: "Download the rho-bot desktop app. It captures your screen and accessibility tree securely on your device.",
+                link: "/download",
               },
               {
                 icon: Target,
@@ -169,7 +172,7 @@ export default function HomePage() {
                 title: "Watch It Work",
                 desc: "The agent decomposes your goal into a hierarchical plan and executes it through real clicks and keystrokes.",
               },
-            ].map(({ icon: Icon, step, title, desc }) => (
+            ].map(({ icon: Icon, step, title, desc, link }) => (
               <div key={step} className="relative">
                 <span className="text-6xl font-bold text-neutral-800/50 absolute -top-4 -left-2">
                   {step}
@@ -180,6 +183,15 @@ export default function HomePage() {
                   </div>
                   <h3 className="font-semibold mb-2">{title}</h3>
                   <p className="text-sm text-neutral-500 leading-relaxed">{desc}</p>
+                  {link && (
+                    <Link
+                      href={link}
+                      className="mt-3 inline-flex items-center gap-1.5 text-sm text-rho-400 hover:text-rho-300 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download now
+                    </Link>
+                  )}
                 </div>
               </div>
             ))}

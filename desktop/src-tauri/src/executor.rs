@@ -10,6 +10,8 @@ pub struct Action {
     pub text: Option<String>,
     pub key: Option<String>,
     pub modifiers: Option<Vec<String>>,
+    /// Non-None when the server denies the request (quota exceeded, payment required, etc.)
+    pub error: Option<String>,
 }
 
 #[cfg(target_os = "macos")]

@@ -23,6 +23,9 @@ export default function Navbar() {
           <Link href="/pricing" className="text-sm text-neutral-400 hover:text-neutral-100 transition-colors">
             Pricing
           </Link>
+          <Link href="/download" className="text-sm text-neutral-400 hover:text-neutral-100 transition-colors">
+            Download
+          </Link>
           <Link
             href="/login"
             className="text-sm text-neutral-400 hover:text-neutral-100 transition-colors"
@@ -57,6 +60,7 @@ export default function Navbar() {
         <div className="md:hidden border-t border-neutral-800 px-6 py-4 space-y-3 bg-neutral-950">
           <a href="/#how-it-works" className="block text-sm text-neutral-400">How It Works</a>
           <Link href="/pricing" className="block text-sm text-neutral-400">Pricing</Link>
+          <Link href="/download" className="block text-sm text-neutral-400">Download</Link>
           <Link href="/login" className="block text-sm text-neutral-400">Log In</Link>
           <Link href="/signup" className="block text-sm text-rho-400 font-medium">Get Started</Link>
         </div>

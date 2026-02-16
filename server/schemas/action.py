@@ -26,3 +26,4 @@ class ActionPayload(BaseModel):
     key: str | None = None
     modifiers: list[str] = Field(default_factory=list)
     confidence: float = 0.0
+    error: str | None = None  # Non-None when quota exceeded or payment required

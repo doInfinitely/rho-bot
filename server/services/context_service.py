@@ -13,9 +13,10 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.models.database import ActionLog, ContextLog, Session
+from server.models.database import ActionLog, ContextLog, Session, TrainingPair
 from server.schemas.action import ActionPayload
 from server.schemas.context import ContextPayload
+from server.schemas.training import TrainingPayload
 from server.services.model_service import ModelService
 
 logger = logging.getLogger(__name__)
@@ -70,3 +71,25 @@ class ContextService:
 
         await db.commit()
         return action
+
+    async def store_training_pair(
+        self,
+        payload: TrainingPayload,
+        user_id: str,
+        db: AsyncSession,
+    ) -> None:
+        """Persist a context/action pair captured during passive recording."""
+
+        pair = TrainingPair(
+            session_id=payload.context.session_id,
+            user_id=user_id,
+            timestamp=payload.context.timestamp,
+            active_app=payload.context.active_app,
+            accessibility_tree_json=json.dumps(payload.context.accessibility_tree),
+            screenshot_path="",  # TODO: save screenshot to disk / object storage
+            user_actions_json=json.dumps(
+                [a.model_dump() for a in payload.user_actions]
+            ),
+        )
+        db.add(pair)
+        await db.commit()

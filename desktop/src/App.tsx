@@ -4,13 +4,14 @@ import StatusPanel from "./components/StatusPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import ActivityLog from "./components/ActivityLog";
 
-export type AgentState = "disconnected" | "connected" | "running" | "paused";
+export type AgentState = "disconnected" | "connected" | "running" | "recording" | "paused" | "quota_exceeded";
 
 export interface ActionEntry {
   id: string;
   type: string;
   timestamp: number;
   confidence: number;
+  error?: string | null;
 }
 
 export default function App() {

@@ -56,12 +56,27 @@ class ActionLog(Base):
     success = Column(Boolean, default=True)
 
 
+class TrainingPair(Base):
+    """A context/action pair recorded while the agent was inactive, for later training."""
+
+    __tablename__ = "training_pairs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String, nullable=False, index=True)
+    user_id = Column(String, nullable=False, index=True)
+    timestamp = Column(Float, nullable=False)
+    active_app = Column(String, default="")
+    accessibility_tree_json = Column(Text, default="{}")
+    screenshot_path = Column(String, default="")
+    user_actions_json = Column(Text, default="[]")
+
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, nullable=False, unique=True, index=True)
-    stripe_customer_id = Column(String, nullable=False, unique=True)
+    stripe_customer_id = Column(String, nullable=True, unique=True)
     stripe_subscription_id = Column(String, nullable=True, unique=True)
     plan_id = Column(String, nullable=False, default="free")  # free, pro, team
     status = Column(String, nullable=False, default="active")  # active, trialing, past_due, canceled, incomplete

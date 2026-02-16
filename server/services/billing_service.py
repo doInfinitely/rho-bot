@@ -123,6 +123,71 @@ async def get_subscription(db: AsyncSession, user_id: str) -> Subscription | Non
     return result.scalar_one_or_none()
 
 
+# ---- Quota enforcement ----
+
+# Subscription statuses that permit usage
+_ACTIVE_STATUSES = {"active", "trialing"}
+
+FREE_TASKS_LIMIT = 50
+
+
+async def get_or_create_subscription(db: AsyncSession, user_id: str) -> Subscription:
+    """Return the user's subscription, creating a free-tier row if none exists."""
+    result = await db.execute(
+        select(Subscription).where(Subscription.user_id == user_id)
+    )
+    sub = result.scalar_one_or_none()
+    if sub is not None:
+        return sub
+
+    # First time this user touches billing — bootstrap a free-tier row.
+    # No Stripe customer is created yet; that happens when they upgrade.
+    sub = Subscription(
+        user_id=user_id,
+        plan_id="free",
+        status="active",
+        tasks_limit=FREE_TASKS_LIMIT,
+    )
+    db.add(sub)
+    await db.commit()
+    await db.refresh(sub)
+    return sub
+
+
+async def check_and_increment_quota(
+    db: AsyncSession, user_id: str
+) -> tuple[bool, str]:
+    """Check whether the user may consume a task, and if so, increment usage.
+
+    Returns
+    -------
+    (allowed, reason)
+        *allowed* is ``True`` when the action should proceed.
+        When ``False``, *reason* contains a human-readable explanation.
+    """
+    sub = await get_or_create_subscription(db, user_id)
+
+    # 1. Subscription must be in good standing
+    if sub.status not in _ACTIVE_STATUSES:
+        return False, (
+            f"Your subscription is {sub.status}. "
+            "Please update your payment method at https://rho.bot/dashboard/billing"
+        )
+
+    # 2. Must be under the task quota
+    if sub.tasks_used >= sub.tasks_limit:
+        return False, (
+            f"You've used all {sub.tasks_limit} tasks included in your "
+            f"{sub.plan_id.title()} plan this period. "
+            "Upgrade your plan or wait for the next billing cycle."
+        )
+
+    # All good — bump usage
+    sub.tasks_used = (sub.tasks_used or 0) + 1
+    await db.commit()
+    return True, ""
+
+
 # ---- Webhook handling ----
 
 

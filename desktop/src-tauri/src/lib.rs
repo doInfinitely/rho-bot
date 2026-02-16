@@ -37,6 +37,17 @@ mod commands {
     }
 
     #[tauri::command]
+    pub async fn start_recording(handle: State<'_, Arc<AgentHandle>>) -> Result<(), String> {
+        handle.start_recording().await.map_err(|e| e.to_string())
+    }
+
+    #[tauri::command]
+    pub async fn stop_recording(handle: State<'_, Arc<AgentHandle>>) -> Result<(), String> {
+        handle.stop_recording().await;
+        Ok(())
+    }
+
+    #[tauri::command]
     pub async fn get_recent_actions(
         handle: State<'_, Arc<AgentHandle>>,
     ) -> Result<Vec<Value>, String> {
@@ -117,6 +128,8 @@ pub fn run() {
             commands::get_agent_state,
             commands::start_agent,
             commands::stop_agent,
+            commands::start_recording,
+            commands::stop_recording,
             commands::get_recent_actions,
             commands::get_settings,
             commands::save_settings,

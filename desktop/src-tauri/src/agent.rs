@@ -21,6 +21,8 @@ pub struct AgentHandle {
     recent_actions: Arc<Mutex<Vec<Value>>>,
     stop_signal: Arc<Notify>,
     running: Arc<Mutex<bool>>,
+    recording_stop: Arc<Notify>,
+    recording: Arc<Mutex<bool>>,
 }
 
 impl AgentHandle {
@@ -32,6 +34,8 @@ impl AgentHandle {
             recent_actions: Arc::new(Mutex::new(Vec::new())),
             stop_signal: Arc::new(Notify::new()),
             running: Arc::new(Mutex::new(false)),
+            recording_stop: Arc::new(Notify::new()),
+            recording: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -82,6 +86,51 @@ impl AgentHandle {
 
     pub async fn recent_actions(&self) -> Vec<Value> {
         self.recent_actions.lock().await.clone()
+    }
+
+    pub async fn start_recording(&self) -> Result<(), String> {
+        let running = self.running.lock().await;
+        if *running {
+            return Err("Cannot record while agent is running".into());
+        }
+        drop(running);
+
+        let mut recording = self.recording.lock().await;
+        if *recording {
+            return Err("Already recording".into());
+        }
+        *recording = true;
+        drop(recording);
+
+        let state = self.state.clone();
+        let settings = self.settings.clone();
+        let event_buffer = self.event_buffer.clone();
+        let stop_signal = self.recording_stop.clone();
+        let recording = self.recording.clone();
+
+        tokio::spawn(async move {
+            let result = run_recording_loop(
+                state.clone(),
+                settings,
+                event_buffer,
+                stop_signal,
+            )
+            .await;
+
+            if let Err(e) = result {
+                log::error!("Recording loop error: {}", e);
+            }
+
+            *state.lock().await = "disconnected".into();
+            *recording.lock().await = false;
+        });
+
+        Ok(())
+    }
+
+    pub async fn stop_recording(&self) {
+        self.recording_stop.notify_one();
+        *self.recording.lock().await = false;
     }
 
     pub async fn update_settings(&self, new: AppSettings) {
@@ -153,8 +202,19 @@ async fn run_agent_loop(
         // 5. Send & receive
         match client.send_context(&context).await {
             Ok(action_json) => {
-                // 6. Execute
+                // 6. Check for server-side errors (quota exceeded, payment required)
                 if let Ok(action) = serde_json::from_value::<Action>(action_json.clone()) {
+                    if let Some(ref error_msg) = action.error {
+                        log::warn!("Server denied action: {}", error_msg);
+                        *state.lock().await = "quota_exceeded".into();
+
+                        // Still log it so the UI can display the reason
+                        let mut log = recent_actions.lock().await;
+                        log.push(action_json);
+                        break;
+                    }
+
+                    // 7. Execute
                     if action.action_type != "noop" {
                         if let Err(e) = executor::execute(&action) {
                             log::error!("Action execution failed: {}", e);
@@ -162,7 +222,7 @@ async fn run_agent_loop(
                     }
                 }
 
-                // 7. Log for the UI
+                // 8. Log for the UI
                 let mut log = recent_actions.lock().await;
                 log.push(action_json);
                 // Keep only the last 50 entries
@@ -180,6 +240,81 @@ async fn run_agent_loop(
 
         // 8. Sleep
         tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+    }
+
+    client.close().await;
+    Ok(())
+}
+
+/// Passive recording loop: captures context, observes user actions, and
+/// sends context/action pairs to the server for training data collection.
+async fn run_recording_loop(
+    state: Arc<Mutex<String>>,
+    settings: Arc<Mutex<AppSettings>>,
+    event_buffer: Arc<EventBuffer>,
+    stop_signal: Arc<Notify>,
+) -> Result<(), String> {
+    let session_id = Uuid::new_v4().to_string();
+
+    let (server_url, token, interval) = {
+        let s = settings.lock().await;
+        (s.server_url.clone(), s.auth_token.clone(), s.capture_interval_ms)
+    };
+
+    // Derive the recording endpoint from the agent endpoint
+    let record_url = server_url.replace("/ws/agent", "/ws/record");
+
+    // Connect
+    *state.lock().await = "connected".into();
+    let mut client = WsClient::connect(&record_url, &token).await?;
+    *state.lock().await = "recording".into();
+
+    loop {
+        // Check for stop signal (non-blocking)
+        if tokio::time::timeout(std::time::Duration::from_millis(1), stop_signal.notified())
+            .await
+            .is_ok()
+        {
+            break;
+        }
+
+        // 1. Capture the current screen state
+        let screenshot = match capture::capture_screen() {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("Screenshot failed: {}", e);
+                String::new()
+            }
+        };
+
+        let tree = accessibility::read_frontmost_tree();
+
+        let context = json!({
+            "session_id": session_id,
+            "timestamp": now(),
+            "screenshot_b64": screenshot,
+            "accessibility_tree": tree,
+            "recent_events": [],
+            "active_app": "",
+            "window_bounds": {"x": 0, "y": 0, "width": 1920, "height": 1080}
+        });
+
+        // 2. Wait for the user to act
+        tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+
+        // 3. Drain input events that occurred during the interval
+        let user_actions = event_buffer.drain().await;
+
+        // 4. Send the context/action pair to the server
+        let payload = json!({
+            "context": context,
+            "user_actions": user_actions,
+        });
+
+        if let Err(e) = client.send_training_pair(&payload).await {
+            log::error!("Failed to send training pair: {}", e);
+            break;
+        }
     }
 
     client.close().await;

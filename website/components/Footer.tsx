@@ -30,6 +30,11 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link href="/download" className="text-sm text-neutral-500 hover:text-neutral-300 transition-colors">
+                  Download
+                </Link>
+              </li>
+              <li>
                 <Link href="/dashboard" className="text-sm text-neutral-500 hover:text-neutral-300 transition-colors">
                   Dashboard
                 </Link>
