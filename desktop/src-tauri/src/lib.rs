@@ -89,15 +89,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
-            // Start global event monitor now that the async runtime is active
+            // Start global event monitor on a background thread.
+            // This is safe even if Accessibility permissions aren't granted yet.
             event_monitor::start_event_monitor(agent_for_setup.event_buffer());
+
             // Build tray menu
             let quit = MenuItemBuilder::with_id("quit", "Quit rho-bot").build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
-            // Build tray icon
-            TrayIconBuilder::new()
+            // Build tray icon using the bundled icon
+            let icon = app.default_window_icon().cloned();
+            let mut builder = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("rho-bot agent")
                 .on_menu_event(|app, event| {
@@ -125,8 +128,13 @@ pub fn run() {
                             let _ = w.set_focus();
                         }
                     }
-                })
-                .build(app)?;
+                });
+
+            if let Some(icon) = icon {
+                builder = builder.icon(icon);
+            }
+
+            builder.build(app)?;
 
             Ok(())
         })

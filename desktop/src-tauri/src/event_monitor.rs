@@ -75,7 +75,7 @@ mod macos {
 
     struct TapContext {
         buffer: Arc<EventBuffer>,
-        rt: tokio::runtime::Handle,
+        rt: tokio::runtime::Runtime,
     }
 
     extern "C" fn tap_callback(
@@ -165,13 +165,23 @@ mod macos {
     }
 
     pub fn start_event_monitor(buffer: Arc<EventBuffer>) {
-        let rt_handle = tokio::runtime::Handle::current();
-
         std::thread::spawn(move || {
-            let ctx = Box::new(TapContext {
-                buffer,
-                rt: rt_handle,
-            });
+            // Build a dedicated small runtime for the event monitor thread.
+            // We avoid tokio::runtime::Handle::current() because the Tauri
+            // setup callback may run before the tokio runtime is "entered"
+            // on the main thread (macOS app delegate FFI boundary).
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    log::error!("Failed to build event-monitor tokio runtime: {}", e);
+                    return;
+                }
+            };
+
+            let ctx = Box::new(TapContext { buffer, rt });
             let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
 
             let tap = unsafe {

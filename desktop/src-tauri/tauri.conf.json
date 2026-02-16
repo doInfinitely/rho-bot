@@ -21,11 +21,6 @@
         "visible": false
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true,
-      "tooltip": "rho-bot agent"
-    },
     "security": {
       "csp": null
     }

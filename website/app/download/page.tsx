@@ -122,15 +122,20 @@ export default function DownloadPage() {
               {
                 step: "1",
                 title: "Run the installer",
-                desc: "Open the downloaded file and drag rho-bot to your Applications folder (macOS) or follow the setup wizard (Windows/Linux).",
+                desc: "Open the downloaded DMG and drag rho-bot to your Applications folder (macOS) or follow the setup wizard (Windows/Linux).",
               },
               {
                 step: "2",
+                title: "Clear the quarantine flag (macOS)",
+                desc: 'If macOS says the app is "damaged," open Terminal and run: xattr -cr /Applications/rho-bot.app — then open the app again.',
+              },
+              {
+                step: "3",
                 title: "Grant permissions",
                 desc: "rho-bot needs Screen Recording and Accessibility access. The app will prompt you on first launch — approve both in System Settings.",
               },
               {
-                step: "3",
+                step: "4",
                 title: "Sign in",
                 desc: "Open rho-bot from your menu bar and sign in with your account. The agent connects to the server automatically.",
               },
@@ -148,6 +153,26 @@ export default function DownloadPage() {
               </li>
             ))}
           </ol>
+
+          {/* macOS troubleshooting */}
+          <div className="mt-10 p-5 rounded-xl border border-amber-800/40 bg-amber-950/20">
+            <h3 className="font-semibold text-amber-400 mb-2 flex items-center gap-2">
+              <Apple className="w-4 h-4" />
+              macOS: &ldquo;App is damaged&rdquo; fix
+            </h3>
+            <p className="text-sm text-neutral-400 leading-relaxed mb-3">
+              macOS quarantines apps downloaded from the internet. Since
+              rho-bot is not yet notarized with Apple, Gatekeeper may block it.
+              To fix this, open <strong>Terminal</strong> and run:
+            </p>
+            <code className="block px-4 py-2.5 rounded-lg bg-neutral-900 text-sm text-neutral-200 font-mono">
+              xattr -cr /Applications/rho-bot.app
+            </code>
+            <p className="text-xs text-neutral-500 mt-2">
+              Then open the app normally. You may also need to right-click
+              &rarr; Open the first time.
+            </p>
+          </div>
 
           <div className="mt-10 text-center">
             <p className="text-sm text-neutral-500 mb-4">
