@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentState } from "../App";
 
@@ -19,7 +20,25 @@ const stateLabels: Record<AgentState, string> = {
   quota_exceeded: "Usage Limit Reached",
 };
 
+interface Permissions {
+  screen_recording: boolean;
+  accessibility: boolean;
+}
+
 export default function StatusPanel({ state }: { state: AgentState }) {
+  const [perms, setPerms] = useState<Permissions | null>(null);
+
+  useEffect(() => {
+    const check = () => {
+      invoke<Permissions>("check_permissions")
+        .then(setPerms)
+        .catch(() => {});
+    };
+    check();
+    const interval = setInterval(check, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleStart = async () => {
     try {
       await invoke("start_agent");
@@ -53,12 +72,44 @@ export default function StatusPanel({ state }: { state: AgentState }) {
   };
 
   const busy = state === "running" || state === "recording";
+  const missingPerms =
+    perms && (!perms.screen_recording || !perms.accessibility);
 
   return (
     <div className="space-y-6">
+      {/* Permissions warning */}
+      {missingPerms && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm space-y-2">
+          <p className="font-medium text-amber-200">Permissions needed</p>
+          <p className="text-xs text-amber-300/80">
+            Open <strong>System Settings &gt; Privacy &amp; Security</strong>{" "}
+            and enable:
+          </p>
+          <ul className="text-xs text-amber-300/80 list-disc list-inside space-y-1">
+            {!perms.screen_recording && (
+              <li>
+                <strong>Screen Recording</strong> — required to capture your
+                screen
+              </li>
+            )}
+            {!perms.accessibility && (
+              <li>
+                <strong>Accessibility</strong> — required to read UI elements
+                and execute actions
+              </li>
+            )}
+          </ul>
+          <p className="text-[10px] text-amber-400/60">
+            You may need to restart the app after granting permissions.
+          </p>
+        </div>
+      )}
+
       {/* Status indicator */}
       <div className="flex items-center gap-3">
-        <div className={`w-3 h-3 rounded-full ${stateColors[state]} animate-pulse`} />
+        <div
+          className={`w-3 h-3 rounded-full ${stateColors[state]} animate-pulse`}
+        />
         <span className="text-sm font-medium">{stateLabels[state]}</span>
       </div>
 

@@ -164,6 +164,23 @@ mod commands {
     }
 
     #[tauri::command]
+    pub async fn check_permissions() -> Result<Value, String> {
+        let screen = crate::capture::has_screen_recording_permission();
+        #[cfg(target_os = "macos")]
+        let accessibility = {
+            extern "C" { fn AXIsProcessTrusted() -> bool; }
+            unsafe { AXIsProcessTrusted() }
+        };
+        #[cfg(not(target_os = "macos"))]
+        let accessibility = true;
+
+        Ok(serde_json::json!({
+            "screen_recording": screen,
+            "accessibility": accessibility,
+        }))
+    }
+
+    #[tauri::command]
     pub async fn get_agent_state(handle: State<'_, Arc<AgentHandle>>) -> Result<String, String> {
         Ok(handle.state().await)
     }
@@ -286,6 +303,7 @@ pub fn run() {
             commands::signup,
             commands::logout,
             commands::get_auth_state,
+            commands::check_permissions,
             commands::get_agent_state,
             commands::start_agent,
             commands::stop_agent,

@@ -10,22 +10,26 @@ use core_graphics::display::{kCGWindowListOptionOnScreenOnly, CGDisplay};
 
 #[cfg(target_os = "macos")]
 extern "C" {
-    /// Returns true if the app has Screen Recording permission.
     fn CGPreflightScreenCaptureAccess() -> bool;
-    /// Triggers the Screen Recording permission dialog if not yet decided.
-    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+/// Check whether Screen Recording permission has been granted.
+#[cfg(target_os = "macos")]
+pub fn has_screen_recording_permission() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn has_screen_recording_permission() -> bool {
+    true
 }
 
 /// Capture the main display and return a base64-encoded PNG string.
 #[cfg(target_os = "macos")]
 pub fn capture_screen() -> Result<String, String> {
-    // Check Screen Recording permission before attempting capture.
-    // If not granted, request it (shows the system dialog) and return
-    // an empty string instead of trying to process a placeholder image.
-    let has_permission = unsafe { CGPreflightScreenCaptureAccess() };
-    if !has_permission {
-        unsafe { CGRequestScreenCaptureAccess() };
-        return Err("Screen Recording permission not granted. Enable it in System Settings > Privacy & Security > Screen Recording.".into());
+    // Quick permission check — no UI, no dialogs, just a bool.
+    if !has_screen_recording_permission() {
+        return Err("Screen Recording permission not granted".into());
     }
 
     let display = CGDisplay::main();
@@ -35,7 +39,7 @@ pub fn capture_screen() -> Result<String, String> {
         0, // kCGNullWindowID
         Default::default(),
     )
-    .ok_or_else(|| "Failed to capture screenshot (CGDisplay::screenshot returned nil)".to_string())?;
+    .ok_or_else(|| "CGDisplay::screenshot returned nil".to_string())?;
 
     let width = cg_image.width() as u32;
     let height = cg_image.height() as u32;
@@ -51,15 +55,11 @@ pub fn capture_screen() -> Result<String, String> {
 
     if actual_len < expected_len {
         return Err(format!(
-            "Screenshot data too small: got {} bytes, expected {} ({}x{}, bpr={})",
+            "Screenshot data too small: {} bytes < expected {} ({}x{}, bpr={})",
             actual_len, expected_len, width, height, bytes_per_row
         ));
     }
 
-    let data_ptr = raw_data.bytes().as_ptr();
-    let pixel_data = unsafe { std::slice::from_raw_parts(data_ptr, expected_len) };
-
-    // Verify that bytes_per_row can hold width*4 pixels
     if bytes_per_row < (width as usize) * 4 {
         return Err(format!(
             "bytes_per_row ({}) < width*4 ({})",
@@ -67,6 +67,9 @@ pub fn capture_screen() -> Result<String, String> {
             (width as usize) * 4
         ));
     }
+
+    let data_ptr = raw_data.bytes().as_ptr();
+    let pixel_data = unsafe { std::slice::from_raw_parts(data_ptr, expected_len) };
 
     // CoreGraphics gives us BGRA; convert to RGBA for the `image` crate
     let mut rgba = Vec::with_capacity((width * height * 4) as usize);

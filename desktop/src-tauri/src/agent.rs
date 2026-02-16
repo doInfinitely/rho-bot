@@ -165,10 +165,14 @@ async fn run_agent_loop(
         (s.ws_agent_url(), s.auth_token.clone(), s.capture_interval_ms)
     };
 
+    log::info!("Agent connecting to {}", ws_url);
+
     // Connect
     *state.lock().await = "connected".into();
     let mut client = WsClient::connect(&ws_url, &token).await?;
     *state.lock().await = "running".into();
+
+    let mut consecutive_errors: u32 = 0;
 
     loop {
         // Check for stop signal (non-blocking)
@@ -179,42 +183,25 @@ async fn run_agent_loop(
             break;
         }
 
-        // 1. Capture screenshot (in a blocking thread to avoid stalling the runtime)
-        let screenshot = tokio::task::spawn_blocking(|| {
-            std::panic::catch_unwind(capture::capture_screen)
-        })
-        .await
-        .unwrap_or(Ok(Err("task join error".into())));
-        let screenshot = match screenshot {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
+        // 1. Capture screenshot
+        let screenshot = match capture::capture_screen() {
+            Ok(s) => { consecutive_errors = 0; s }
+            Err(e) => {
                 log::warn!("Screenshot failed: {}", e);
-                String::new()
-            }
-            Err(_) => {
-                log::warn!("Screenshot panicked");
+                consecutive_errors += 1;
                 String::new()
             }
         };
 
-        // 2. Read accessibility tree (blocking)
-        let tree = tokio::task::spawn_blocking(|| {
-            std::panic::catch_unwind(accessibility::read_frontmost_tree)
-                .unwrap_or_else(|_| serde_json::json!({"error": "accessibility panicked"}))
-        })
-        .await
-        .unwrap_or_else(|_| serde_json::json!({"error": "task join error"}));
+        // 2. Read accessibility tree
+        let tree = accessibility::read_frontmost_tree();
 
         // 3. Gather recent events
         let events = event_buffer.drain().await;
 
-        // 4. Build context bundle (blocking osascript calls)
-        let (app_name, _pid) = tokio::task::spawn_blocking(platform::frontmost_app)
-            .await
-            .unwrap_or_else(|_| (String::new(), -1));
-        let (wx, wy, ww, wh) = tokio::task::spawn_blocking(platform::focused_window_bounds)
-            .await
-            .unwrap_or_else(|_| (0.0, 0.0, 1920.0, 1080.0));
+        // 4. Build context bundle
+        let (app_name, _pid) = platform::frontmost_app();
+        let (wx, wy, ww, wh) = platform::focused_window_bounds();
 
         let context = json!({
             "session_id": session_id,
@@ -265,8 +252,13 @@ async fn run_agent_loop(
             }
         }
 
-        // 8. Sleep
-        tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+        // 8. Sleep (back off if capture keeps failing)
+        let sleep_ms = if consecutive_errors > 5 {
+            interval.max(5000) // slow down to 5s if everything is failing
+        } else {
+            interval
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
     }
 
     client.close().await;
@@ -302,37 +294,18 @@ async fn run_recording_loop(
             break;
         }
 
-        // 1. Capture the current screen state (blocking)
-        let screenshot = tokio::task::spawn_blocking(|| {
-            std::panic::catch_unwind(capture::capture_screen)
-        })
-        .await
-        .unwrap_or(Ok(Err("task join error".into())));
-        let screenshot = match screenshot {
-            Ok(Ok(s)) => s,
-            Ok(Err(e)) => {
+        // 1. Capture the current screen state
+        let screenshot = match capture::capture_screen() {
+            Ok(s) => s,
+            Err(e) => {
                 log::warn!("Screenshot failed: {}", e);
-                String::new()
-            }
-            Err(_) => {
-                log::warn!("Screenshot panicked");
                 String::new()
             }
         };
 
-        let tree = tokio::task::spawn_blocking(|| {
-            std::panic::catch_unwind(accessibility::read_frontmost_tree)
-                .unwrap_or_else(|_| serde_json::json!({"error": "accessibility panicked"}))
-        })
-        .await
-        .unwrap_or_else(|_| serde_json::json!({"error": "task join error"}));
-
-        let (app_name, _pid) = tokio::task::spawn_blocking(platform::frontmost_app)
-            .await
-            .unwrap_or_else(|_| (String::new(), -1));
-        let (wx, wy, ww, wh) = tokio::task::spawn_blocking(platform::focused_window_bounds)
-            .await
-            .unwrap_or_else(|_| (0.0, 0.0, 1920.0, 1080.0));
+        let tree = accessibility::read_frontmost_tree();
+        let (app_name, _pid) = platform::frontmost_app();
+        let (wx, wy, ww, wh) = platform::focused_window_bounds();
 
         let context = json!({
             "session_id": session_id,
