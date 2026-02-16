@@ -38,14 +38,23 @@ model_service = ModelService(
 context_service = ContextService(model_service=model_service)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Starting rho-bot server …")
+async def _background_init_db():
+    """Run init_db in the background so it doesn't block server startup."""
     try:
         await init_db()
         logger.info("Database initialised successfully")
     except Exception as exc:
-        logger.error("Database init failed (server will start without DB): %s", exc)
+        logger.error("Database init failed (will retry on first request): %s", exc)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    import asyncio
+
+    logger.info("Starting rho-bot server …")
+    # Fire-and-forget: don't block the server from accepting requests
+    asyncio.create_task(_background_init_db())
+    logger.info("Server ready (DB init running in background)")
     yield
     logger.info("Shutting down rho-bot server …")
 

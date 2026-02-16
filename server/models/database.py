@@ -6,7 +6,11 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from server.config import settings
 
-engine = create_async_engine(settings.database_url, echo=settings.debug)
+engine = create_async_engine(
+    settings.database_url,
+    echo=settings.debug,
+    connect_args={"timeout": 5},  # 5s connect timeout (asyncpg default is 60s)
+)
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -92,19 +96,20 @@ async def get_db() -> AsyncSession:
 
 async def init_db():
     import asyncio
+    import logging
 
-    for attempt in range(5):
+    log = logging.getLogger(__name__)
+
+    for attempt in range(3):
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             return
         except Exception as e:
-            if attempt < 4:
+            if attempt < 2:
                 wait = 2 ** attempt
-                import logging
-                logging.getLogger(__name__).warning(
-                    "DB init attempt %d failed (%s), retrying in %ds…", attempt + 1, e, wait
-                )
+                log.warning("DB init attempt %d failed (%s), retrying in %ds…", attempt + 1, e, wait)
                 await asyncio.sleep(wait)
             else:
+                log.error("DB init failed after %d attempts: %s", attempt + 1, e)
                 raise
