@@ -56,12 +56,11 @@ class ModelService:
 
     def _init_local(self, path: str, device_override: str, encryption_key: str) -> None:
         """Load a PyTorch model in-process for local inference."""
-        import asyncio
         import io
-        from functools import partial
 
         import torch
 
+        from server.services.model_arch import load_policy
         from server.services.preprocessing import preprocess
         from server.services.postprocessing import postprocess
 
@@ -82,25 +81,21 @@ class ModelService:
 
             raw_bytes = decrypt_file(path, encryption_key)
             buf = io.BytesIO(raw_bytes)
-            state = torch.load(buf, map_location=device, weights_only=True)
+            ckpt = torch.load(buf, map_location=device, weights_only=False)
         else:
-            state = torch.load(path, map_location=device, weights_only=True)
+            ckpt = torch.load(path, map_location=device, weights_only=False)
 
-        if isinstance(state, torch.nn.Module):
-            model = state
-        elif isinstance(state, dict):
-            logger.error(
-                "Loaded a state_dict but no model architecture is registered yet. "
-                "Wrap your nn.Module subclass and load state_dict into it here."
-            )
-            return
+        # Extract the policy state_dict from the training checkpoint
+        if isinstance(ckpt, dict) and "policy" in ckpt:
+            state_dict = ckpt["policy"]
+        elif isinstance(ckpt, dict):
+            state_dict = ckpt
         else:
-            logger.error("Unexpected checkpoint type: %s", type(state))
+            logger.error("Unexpected checkpoint type: %s", type(ckpt))
             return
 
-        model.to(device)
-        model.eval()
-        logger.info("Model loaded and set to eval mode on %s", device)
+        model = load_policy(state_dict, device)
+        logger.info("ActionPolicy loaded (epoch %s) on %s", ckpt.get("epoch", "?"), device)
 
         # Stash everything needed for local inference
         self._local_model = model

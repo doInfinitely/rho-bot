@@ -4,6 +4,7 @@ use crate::capture;
 use crate::accessibility;
 use crate::events::EventBuffer;
 use crate::executor::{self, Action};
+use crate::platform;
 use crate::settings::AppSettings;
 use crate::ws_client::WsClient;
 
@@ -136,6 +137,11 @@ impl AgentHandle {
     pub async fn update_settings(&self, new: AppSettings) {
         *self.settings.lock().await = new;
     }
+
+    /// Access the shared event buffer (e.g. to wire up input monitoring).
+    pub fn event_buffer(&self) -> Arc<EventBuffer> {
+        self.event_buffer.clone()
+    }
 }
 
 fn now() -> f64 {
@@ -189,14 +195,17 @@ async fn run_agent_loop(
         let events = event_buffer.drain().await;
 
         // 4. Build context bundle
+        let (app_name, _pid) = platform::frontmost_app();
+        let (wx, wy, ww, wh) = platform::focused_window_bounds();
+
         let context = json!({
             "session_id": session_id,
             "timestamp": now(),
             "screenshot_b64": screenshot,
             "accessibility_tree": tree,
             "recent_events": events,
-            "active_app": "",
-            "window_bounds": {"x": 0, "y": 0, "width": 1920, "height": 1080}
+            "active_app": app_name,
+            "window_bounds": {"x": wx, "y": wy, "width": ww, "height": wh}
         });
 
         // 5. Send & receive
@@ -288,6 +297,8 @@ async fn run_recording_loop(
         };
 
         let tree = accessibility::read_frontmost_tree();
+        let (app_name, _pid) = platform::frontmost_app();
+        let (wx, wy, ww, wh) = platform::focused_window_bounds();
 
         let context = json!({
             "session_id": session_id,
@@ -295,8 +306,8 @@ async fn run_recording_loop(
             "screenshot_b64": screenshot,
             "accessibility_tree": tree,
             "recent_events": [],
-            "active_app": "",
-            "window_bounds": {"x": 0, "y": 0, "width": 1920, "height": 1080}
+            "active_app": app_name,
+            "window_bounds": {"x": wx, "y": wy, "width": ww, "height": wh}
         });
 
         // 2. Wait for the user to act

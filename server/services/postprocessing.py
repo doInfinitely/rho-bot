@@ -1,15 +1,16 @@
 """
-Postprocessing: convert raw model output tensors into an ActionPayload.
+Postprocessing: convert ActionPolicy output tensors into an ActionPayload.
 
-The model is expected to return a dict with these keys:
+The model returns::
 
-- ``action_type_logits``:  ``(1, num_action_types)`` — unnormalised scores
-- ``coordinates_raw``:     ``(1, 2)`` — predicted [x, y] in normalised [0, 1]
-- ``text_tokens``:         ``(1, max_text_len)`` — integer token ids (0 = pad)
-- ``key_logits``:          ``(1, num_keys)`` — unnormalised scores
-- ``modifier_logits``:     ``(1, num_modifiers)`` — independent logits per modifier
+    {
+        "mouse_logits": (B, 4096)  — 64×64 discretized screen grid
+        "key_logits":   (B, 83)    — 83 key classes
+        "value":        (B, 1)     — state value (unused at inference)
+    }
 
-If a key is missing the corresponding field is left as ``None``.
+We pick the most-likely action (click vs keypress) by comparing the top
+confidence from each head, then populate the ActionPayload accordingly.
 """
 
 from __future__ import annotations
@@ -25,131 +26,89 @@ from server.schemas.context import WindowBounds
 
 logger = logging.getLogger(__name__)
 
-# ── Vocabularies ──────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Grid and key-class constants (must match model_arch.py / training)
+# ---------------------------------------------------------------------------
 
-# Must match the order used in the model's output head.
-ACTION_TYPES: list[ActionType] = [
-    ActionType.click,
-    ActionType.type,
-    ActionType.scroll,
-    ActionType.keypress,
-    ActionType.hotkey,
-    ActionType.wait,
-    ActionType.noop,
-]
+MOUSE_GRID = 64  # screen discretised to 64×64
 
+# 83 key classes — indices must match the training vocabulary.
+# This is the most common ordering; adjust if your training used a different one.
 KEY_NAMES: list[str] = [
-    "return", "tab", "space", "delete", "escape",
-    "left", "right", "down", "up",
+    # Special keys (0–12)
+    "noop", "return", "tab", "space", "delete", "escape",
+    "left", "right", "down", "up", "home", "end", "pageup",
+    # Punctuation / symbols (13–24)
+    "pagedown", "minus", "equal", "bracketleft", "bracketright",
+    "backslash", "semicolon", "quote", "grave", "comma", "period", "slash",
+    # Letters (25–50)
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
     "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
     "u", "v", "w", "x", "y", "z",
+    # Digits (51–60)
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    # F-keys (61–72)
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+    # Modifiers used as standalone keys (73–76)
+    "shift", "ctrl", "alt", "cmd",
+    # Extra (77–82)
+    "insert", "printscreen", "scrolllock", "pause", "numlock", "capslock",
 ]
 
 MODIFIER_NAMES: list[str] = ["cmd", "shift", "alt", "ctrl"]
 
-# Simple id-to-char map for text decoding (ASCII printable).
-# A production model would use a real tokenizer (SentencePiece, BPE, etc.).
-_ID_TO_CHAR: dict[int, str] = {i: chr(i) for i in range(32, 127)}
+# Index of the "noop" key in KEY_NAMES (used to detect no-key-action)
+_NOOP_KEY_IDX = 0
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────
-
-def _decode_text_tokens(token_ids: torch.Tensor) -> str:
-    """Decode a 1-D tensor of integer token IDs to a string.
-
-    IDs of 0 (padding) are skipped.  Unknown IDs are replaced with '?'.
-    """
-    chars: list[str] = []
-    for tid in token_ids.squeeze().tolist():
-        tid = int(tid)
-        if tid == 0:
-            continue
-        chars.append(_ID_TO_CHAR.get(tid, "?"))
-    return "".join(chars)
-
-
-# ── Public entry point ────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
 
 def postprocess(
     model_output: dict[str, torch.Tensor],
     window_bounds: WindowBounds | None = None,
 ) -> ActionPayload:
-    """Convert model output tensors into a fully-formed ``ActionPayload``.
-
-    Parameters
-    ----------
-    model_output:
-        Dict of tensors as returned by the model's ``forward()``.
-    window_bounds:
-        If provided, used to scale normalised coordinates to pixel values.
-        Falls back to 1920x1080 defaults.
-    """
+    """Convert model output tensors into a fully-formed ``ActionPayload``."""
     wb = window_bounds or WindowBounds()
 
-    # -- Action type ----------------------------------------------------------
-    action_type = ActionType.noop
-    confidence = 0.0
+    mouse_logits = model_output["mouse_logits"].squeeze(0)  # (4096,)
+    key_logits = model_output["key_logits"].squeeze(0)      # (83,)
 
-    if "action_type_logits" in model_output:
-        logits = model_output["action_type_logits"].squeeze(0)  # (num_types,)
-        probs = F.softmax(logits, dim=-1)
-        idx = int(torch.argmax(probs).item())
-        if idx < len(ACTION_TYPES):
-            action_type = ACTION_TYPES[idx]
-            confidence = float(probs[idx].item())
+    # Probabilities for each head
+    mouse_probs = F.softmax(mouse_logits, dim=-1)
+    key_probs = F.softmax(key_logits, dim=-1)
 
-    # -- Coordinates ----------------------------------------------------------
-    coordinates: list[float] | None = None
+    best_mouse_idx = int(torch.argmax(mouse_probs).item())
+    best_mouse_conf = float(mouse_probs[best_mouse_idx].item())
 
-    if "coordinates_raw" in model_output:
-        raw = model_output["coordinates_raw"].squeeze(0)  # (2,)
-        # Model outputs normalised [0, 1]; scale to pixel space.
-        px_x = float(raw[0].item()) * wb.width + wb.x
-        px_y = float(raw[1].item()) * wb.height + wb.y
-        coordinates = [round(px_x, 1), round(px_y, 1)]
+    best_key_idx = int(torch.argmax(key_probs).item())
+    best_key_conf = float(key_probs[best_key_idx].item())
 
-    # -- Text -----------------------------------------------------------------
-    text: str | None = None
+    # Decide: click vs keypress (pick whichever head is more confident).
+    # If the key head picks "noop" treat it as a click regardless.
+    key_is_noop = best_key_idx == _NOOP_KEY_IDX
+    prefer_click = key_is_noop or best_mouse_conf >= best_key_conf
 
-    if "text_tokens" in model_output:
-        decoded = _decode_text_tokens(model_output["text_tokens"])
-        if decoded:
-            text = decoded
+    if prefer_click:
+        # Decode grid index → pixel coordinates
+        grid_y = best_mouse_idx // MOUSE_GRID
+        grid_x = best_mouse_idx % MOUSE_GRID
+        px_x = (grid_x + 0.5) / MOUSE_GRID * wb.width + wb.x
+        px_y = (grid_y + 0.5) / MOUSE_GRID * wb.height + wb.y
 
-    # -- Key ------------------------------------------------------------------
-    key: str | None = None
+        return ActionPayload(
+            action_id=str(uuid.uuid4()),
+            type=ActionType.click,
+            coordinates=[round(px_x, 1), round(px_y, 1)],
+            confidence=round(best_mouse_conf, 4),
+        )
+    else:
+        key_name = KEY_NAMES[best_key_idx] if best_key_idx < len(KEY_NAMES) else "unknown"
 
-    if "key_logits" in model_output:
-        logits = model_output["key_logits"].squeeze(0)
-        idx = int(torch.argmax(logits).item())
-        if idx < len(KEY_NAMES):
-            key = KEY_NAMES[idx]
-
-    # -- Modifiers ------------------------------------------------------------
-    modifiers: list[str] = []
-
-    if "modifier_logits" in model_output:
-        logits = model_output["modifier_logits"].squeeze(0)
-        preds = torch.sigmoid(logits) > 0.5
-        for i, active in enumerate(preds.tolist()):
-            if active and i < len(MODIFIER_NAMES):
-                modifiers.append(MODIFIER_NAMES[i])
-
-    # -- Assemble -------------------------------------------------------------
-    # Only populate fields relevant to the predicted action type.
-    payload_kwargs: dict = {
-        "action_id": str(uuid.uuid4()),
-        "type": action_type,
-        "confidence": round(confidence, 4),
-        "modifiers": modifiers,
-    }
-
-    if action_type in (ActionType.click, ActionType.scroll):
-        payload_kwargs["coordinates"] = coordinates
-    if action_type == ActionType.type:
-        payload_kwargs["text"] = text
-    if action_type in (ActionType.keypress, ActionType.hotkey):
-        payload_kwargs["key"] = key
-
-    return ActionPayload(**payload_kwargs)
+        return ActionPayload(
+            action_id=str(uuid.uuid4()),
+            type=ActionType.keypress,
+            key=key_name,
+            confidence=round(best_key_conf, 4),
+        )

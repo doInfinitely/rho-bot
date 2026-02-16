@@ -2,7 +2,9 @@ mod agent;
 mod capture;
 mod accessibility;
 mod events;
+mod event_monitor;
 mod executor;
+mod platform;
 mod settings;
 mod ws_client;
 
@@ -67,6 +69,7 @@ mod commands {
         handle: State<'_, Arc<AgentHandle>>,
         settings: AppSettings,
     ) -> Result<(), String> {
+        settings.save()?;
         let mut current = settings_state.lock().await;
         *current = settings.clone();
         handle.update_settings(settings).await;
@@ -77,12 +80,17 @@ mod commands {
 pub fn run() {
     env_logger::init();
 
-    let settings = Arc::new(tokio::sync::Mutex::new(AppSettings::default()));
+    let loaded_settings = settings::AppSettings::load().unwrap_or_default();
+    let settings = Arc::new(tokio::sync::Mutex::new(loaded_settings));
     let agent = Arc::new(AgentHandle::new());
+
+    let agent_for_setup = agent.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
+        .setup(move |app| {
+            // Start global event monitor now that the async runtime is active
+            event_monitor::start_event_monitor(agent_for_setup.event_buffer());
             // Build tray menu
             let quit = MenuItemBuilder::with_id("quit", "Quit rho-bot").build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show Window").build(app)?;

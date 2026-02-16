@@ -9,7 +9,7 @@ import Footer from "@/components/Footer";
 type Platform = "macos" | "windows" | "linux" | "unknown";
 
 const RELEASES_BASE =
-  "https://github.com/rho-bot/rho-bot/releases/latest/download";
+  "https://github.com/doInfinitely/rho-bot/releases/latest/download";
 
 const INSTALLERS: Record<
   Exclude<Platform, "unknown">,
@@ -17,8 +17,8 @@ const INSTALLERS: Record<
 > = {
   macos: {
     label: "Download for macOS",
-    file: "rho-bot.dmg",
-    note: "macOS 13+ &middot; Apple Silicon & Intel",
+    file: "rho-bot_0.1.0_aarch64.dmg",
+    note: "macOS 13+ &middot; Apple Silicon",
   },
   windows: {
     label: "Download for Windows",

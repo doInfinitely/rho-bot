@@ -1,9 +1,9 @@
 """
 Modal GPU inference service for rho-bot.
 
-Loads an encrypted PyTorch model from a Modal Volume on cold start,
-decrypts it into GPU memory, and serves predictions via an HTTPS
-endpoint that the Railway-hosted FastAPI server calls.
+Loads an (optionally encrypted) ActionPolicy checkpoint from a Modal
+Volume on cold start, decrypts it into GPU memory, and serves predictions
+via an HTTPS endpoint that the Railway-hosted FastAPI server calls.
 
 Deploy::
 
@@ -12,14 +12,21 @@ Deploy::
 One-time volume setup::
 
     modal volume create rho-bot-models
-    modal volume put rho-bot-models model.pt.enc /models/model.pt.enc
+    modal volume put rho-bot-models action_ckpt_0080.pt model.pt
+
+Or with encryption::
+
+    python -m server.services.model_security encrypt action_ckpt_0080.pt model.pt.enc --key $KEY
+    modal volume put rho-bot-models model.pt.enc model.pt.enc
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import os
 import sys
+import traceback
 import uuid
 
 import modal
@@ -32,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 app = modal.App("rho-bot-inference")
 
-# Persistent volume for encrypted model weights
+# Persistent volume for model weights
 model_volume = modal.Volume.from_name("rho-bot-models", create_if_missing=True)
 
 # Secret that holds the AES-256 decryption key
@@ -42,15 +49,45 @@ model_secret = modal.Secret.from_name("rho-bot-model-key")
 inference_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
+        "fastapi[standard]",
         "torch>=2.0.0",
         "torchvision>=0.15.0",
         "Pillow>=10.0.0",
         "cryptography>=42.0.0",
         "pydantic>=2.0.0",
+        "transformers>=4.40.0",
+        "open-clip-torch>=2.24.0",
     )
-    # Mount the server package so we can import preprocessing/postprocessing/schemas
+    # Mount the server package so we can import model_arch/preprocessing/postprocessing
     .add_local_dir("server", remote_path="/app/server")
 )
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _find_model_file(encryption_key: str) -> str | None:
+    """Search common paths for the model weights file.
+
+    Handles the double-nesting that occurs when ``modal volume put``
+    places files under a subdirectory (e.g. ``/models/models/...``).
+    """
+    enc_candidates = [
+        "/models/model.pt.enc",
+        "/models/models/model.pt.enc",
+    ]
+    plain_candidates = [
+        "/models/model.pt",
+        "/models/models/model.pt",
+    ]
+
+    candidates = enc_candidates if encryption_key else plain_candidates
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Inference class
@@ -62,7 +99,7 @@ inference_image = (
     gpu="A10G",
     volumes={"/models": model_volume},
     secrets=[model_secret],
-    container_idle_timeout=300,  # keep warm for 5 min after last request
+    scaledown_window=300,  # keep warm for 5 min after last request
     timeout=60,
 )
 class Inference:
@@ -71,18 +108,21 @@ class Inference:
     @modal.enter()
     def load_model(self):
         """Called once when the container starts."""
-        import os
-
         import torch
 
         sys.path.insert(0, "/app")
 
         encryption_key = os.environ.get("RHOBOT_MODEL_ENCRYPTION_KEY", "")
-        model_path = "/models/model.pt.enc" if encryption_key else "/models/model.pt"
 
-        # Check if weights exist
-        if not os.path.exists(model_path):
-            logger.warning("No model weights found at %s — running in stub mode", model_path)
+        # List what's actually in the volume for debugging
+        for dirpath, dirnames, filenames in os.walk("/models"):
+            for fn in filenames:
+                logger.info("Volume file: %s", os.path.join(dirpath, fn))
+
+        model_path = _find_model_file(encryption_key)
+
+        if model_path is None:
+            logger.warning("No model weights found in /models — running in stub mode")
             self.model = None
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             return
@@ -95,59 +135,74 @@ class Inference:
 
             raw_bytes = decrypt_file(model_path, encryption_key)
             buf = io.BytesIO(raw_bytes)
-            state = torch.load(buf, map_location=self.device, weights_only=True)
+            ckpt = torch.load(buf, map_location=self.device, weights_only=False)
         else:
-            state = torch.load(model_path, map_location=self.device, weights_only=True)
+            ckpt = torch.load(model_path, map_location=self.device, weights_only=False)
 
-        if isinstance(state, torch.nn.Module):
-            self.model = state
-        elif isinstance(state, dict):
-            logger.error(
-                "Loaded a state_dict but no model architecture is registered. "
-                "Update inference/app.py to instantiate your nn.Module and "
-                "call model.load_state_dict(state)."
-            )
-            self.model = None
-            return
+        # Extract the policy state_dict from the training checkpoint
+        if isinstance(ckpt, dict) and "policy" in ckpt:
+            state_dict = ckpt["policy"]
+        elif isinstance(ckpt, dict):
+            state_dict = ckpt
         else:
-            logger.error("Unexpected checkpoint type: %s", type(state))
+            logger.error("Unexpected checkpoint type: %s", type(ckpt))
             self.model = None
             return
 
-        self.model.to(self.device)
-        self.model.eval()
-        logger.info("Model ready on %s", self.device)
+        from server.services.model_arch import load_policy
+
+        self.model = load_policy(state_dict, self.device)
+        logger.info(
+            "ActionPolicy loaded (epoch %s) on %s",
+            ckpt.get("epoch", "?") if isinstance(ckpt, dict) else "?",
+            self.device,
+        )
 
     @modal.fastapi_endpoint(method="POST")
     def predict(self, payload: dict):
         """Accept a ContextPayload dict, return an ActionPayload dict."""
         import torch
 
-        sys.path.insert(0, "/app") if "/app" not in sys.path else None
+        if "/app" not in sys.path:
+            sys.path.insert(0, "/app")
 
         from server.schemas.action import ActionPayload, ActionType
         from server.schemas.context import ContextPayload
         from server.services.postprocessing import postprocess
         from server.services.preprocessing import preprocess
 
-        context = ContextPayload(**payload)
+        try:
+            # Default window_bounds if null/missing
+            if payload.get("window_bounds") is None:
+                payload.pop("window_bounds", None)
 
-        # Stub mode — no weights loaded
-        if self.model is None:
+            context = ContextPayload(**payload)
+
+            # Stub mode — no weights loaded
+            if self.model is None:
+                return ActionPayload(
+                    action_id=str(uuid.uuid4()),
+                    type=ActionType.noop,
+                    confidence=0.0,
+                ).model_dump()
+
+            # Preprocess
+            tensors = preprocess(context, device=self.device)
+            tensors = {k: v.to(self.device) for k, v in tensors.items()}
+
+            # Forward pass
+            with torch.no_grad():
+                output = self.model(**tensors)
+
+            # Postprocess
+            action = postprocess(output, context.window_bounds)
+            return action.model_dump()
+
+        except Exception:
+            logger.error("predict failed:\n%s", traceback.format_exc())
             return ActionPayload(
                 action_id=str(uuid.uuid4()),
                 type=ActionType.noop,
                 confidence=0.0,
+                error=traceback.format_exc(),
             ).model_dump()
-
-        # Preprocess
-        tensors = preprocess(context)
-        tensors = {k: v.to(self.device) for k, v in tensors.items()}
-
-        # Forward pass
-        with torch.no_grad():
-            output = self.model(**tensors)
-
-        # Postprocess
-        action = postprocess(output, context.window_bounds)
-        return action.model_dump()
