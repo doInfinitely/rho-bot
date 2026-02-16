@@ -85,14 +85,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Catch all unhandled exceptions and return JSON (with CORS headers)."""
-    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error. Check server logs."},
-    )
+@app.middleware("http")
+async def catch_exceptions_middleware(request: Request, call_next):
+    """Catch unhandled exceptions INSIDE the CORS middleware scope.
+
+    @app.exception_handler runs in ServerErrorMiddleware which sits OUTSIDE
+    CORSMiddleware, so error responses lose CORS headers. This inline
+    middleware runs inside CORS, so the response gets proper headers.
+    """
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error. Check server logs."},
+        )
 
 
 app.include_router(auth.router)
