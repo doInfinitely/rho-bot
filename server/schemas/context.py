@@ -31,3 +31,4 @@ class ContextPayload(BaseModel):
     recent_events: list[InputEvent] = Field(default_factory=list)
     active_app: str = ""
     window_bounds: WindowBounds = Field(default_factory=WindowBounds)
+    goal: str = ""  # natural-language goal written to the agent's "scratchpad"

@@ -34,6 +34,7 @@ class Session(Base):
     started_at = Column(Float, nullable=False)
     ended_at = Column(Float, nullable=True)
     action_count = Column(Integer, default=0)
+    goal = Column(Text, default="")
 
 
 class ContextLog(Base):
@@ -98,13 +99,15 @@ async def init_db():
     import asyncio
     import logging
 
+    from sqlalchemy import text
+
     log = logging.getLogger(__name__)
 
     for attempt in range(3):
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            return
+            break
         except Exception as e:
             if attempt < 2:
                 wait = 2 ** attempt
@@ -113,3 +116,16 @@ async def init_db():
             else:
                 log.error("DB init failed after %d attempts: %s", attempt + 1, e)
                 raise
+
+    # ---- lightweight migrations (add columns to existing tables) ----
+    migrations = [
+        "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS goal TEXT DEFAULT ''",
+    ]
+
+    try:
+        async with engine.begin() as conn:
+            for stmt in migrations:
+                await conn.execute(text(stmt))
+        log.info("Migrations applied successfully")
+    except Exception as e:
+        log.warning("Migration step failed (non-fatal): %s", e)

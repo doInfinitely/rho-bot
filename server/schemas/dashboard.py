@@ -8,6 +8,16 @@ class AgentStatus(BaseModel):
     is_online: bool = False
     last_seen: float | None = None
     total_actions: int = 0
+    goal: str = ""
+
+
+class GoalRequest(BaseModel):
+    goal: str
+
+
+class GoalResponse(BaseModel):
+    goal: str
+    session_id: str | None = None
 
 
 class SessionSummary(BaseModel):
@@ -15,6 +25,7 @@ class SessionSummary(BaseModel):
     started_at: float
     ended_at: float | None = None
     action_count: int = 0
+    goal: str = ""
 
 
 class ActionLogEntry(BaseModel):

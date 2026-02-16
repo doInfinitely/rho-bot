@@ -166,8 +166,10 @@ class ModelService:
 
     def _run_local(self, context: ContextPayload) -> ActionPayload:
         """Synchronous local inference — runs inside an executor thread."""
-        tensors = self._preprocess(context)
-        tensors = {k: v.to(self._device) for k, v in tensors.items()}
+        preprocessed = self._preprocess(context)
+        # Pop non-tensor fields (goal is passed through for future use)
+        preprocessed.pop("goal", None)
+        tensors = {k: v.to(self._device) for k, v in preprocessed.items()}
 
         with self._torch.no_grad():
             output = self._local_model(**tensors)

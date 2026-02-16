@@ -125,16 +125,18 @@ def preprocess_screenshot(
 def preprocess(
     context: ContextPayload,
     device: torch.device | None = None,
-) -> dict[str, torch.Tensor]:
+) -> dict[str, Any]:
     """Convert a ``ContextPayload`` into tensors for ``ActionPolicy.forward()``.
 
     Returns
     -------
-    dict with key:
+    dict with keys:
         encoder_features : ``(1, seq_len, 512)``
+        goal : str (passed through for future goal-conditioned models)
     """
     features = preprocess_screenshot(context.screenshot_b64, device=device)
 
     return {
         "encoder_features": features,
+        "goal": context.goal,
     }
