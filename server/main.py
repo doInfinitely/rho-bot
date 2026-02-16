@@ -21,8 +21,9 @@ print(f"[rho-bot] CWD: {os.getcwd()}", flush=True)
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from server.config import settings
 from server.models.database import init_db
@@ -74,11 +75,25 @@ app = FastAPI(
 # CORS – allow the website and desktop client origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    allow_origins=[
+        "https://rho-bot.net",
+        "https://www.rho-bot.net",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return JSON (with CORS headers)."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error. Check server logs."},
+    )
+
 
 app.include_router(auth.router)
 app.include_router(ws.router)
