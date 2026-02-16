@@ -91,5 +91,20 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    import asyncio
+
+    for attempt in range(5):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            return
+        except Exception as e:
+            if attempt < 4:
+                wait = 2 ** attempt
+                import logging
+                logging.getLogger(__name__).warning(
+                    "DB init attempt %d failed (%s), retrying in %ds…", attempt + 1, e, wait
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise

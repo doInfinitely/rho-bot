@@ -32,7 +32,11 @@ context_service = ContextService(model_service=model_service)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting rho-bot server …")
-    await init_db()
+    try:
+        await init_db()
+        logger.info("Database initialised successfully")
+    except Exception as exc:
+        logger.error("Database init failed (server will start without DB): %s", exc)
     yield
     logger.info("Shutting down rho-bot server …")
 
@@ -61,4 +65,8 @@ app.include_router(billing.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "database_url_set": settings.database_url != "postgresql+asyncpg://postgres:postgres@localhost:5432/rhobot",
+        "inference_url_set": bool(settings.model_inference_url),
+    }
