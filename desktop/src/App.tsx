@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import LoginScreen from "./components/LoginScreen";
 import StatusPanel from "./components/StatusPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import ActivityLog from "./components/ActivityLog";
@@ -14,13 +15,36 @@ export interface ActionEntry {
   error?: string | null;
 }
 
+interface AuthState {
+  logged_in: boolean;
+  email: string;
+  server_url: string;
+}
+
 export default function App() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+
   const [tab, setTab] = useState<"status" | "activity" | "settings">("status");
   const [agentState, setAgentState] = useState<AgentState>("disconnected");
   const [actions, setActions] = useState<ActionEntry[]>([]);
 
-  // Poll agent state from the Rust backend
+  // Check auth on mount
   useEffect(() => {
+    invoke<AuthState>("get_auth_state")
+      .then((s) => {
+        setLoggedIn(s.logged_in);
+        setUserEmail(s.email);
+      })
+      .catch(() => {})
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  // Poll agent state when logged in
+  useEffect(() => {
+    if (!loggedIn) return;
+
     const interval = setInterval(async () => {
       try {
         const state = await invoke<string>("get_agent_state");
@@ -36,8 +60,43 @@ export default function App() {
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [loggedIn]);
 
+  const handleLogout = async () => {
+    try {
+      await invoke("logout");
+    } catch {
+      // ignore
+    }
+    setLoggedIn(false);
+    setUserEmail("");
+    setAgentState("disconnected");
+    setActions([]);
+    setTab("status");
+  };
+
+  // Don't flash anything while checking auth
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
+        <div className="w-5 h-5 border-2 border-rho-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Not logged in -> show login
+  if (!loggedIn) {
+    return (
+      <LoginScreen
+        onLogin={(email) => {
+          setLoggedIn(true);
+          setUserEmail(email);
+        }}
+      />
+    );
+  }
+
+  // Logged in -> main app
   const tabs = [
     { id: "status" as const, label: "Status" },
     { id: "activity" as const, label: "Activity" },
@@ -64,6 +123,19 @@ export default function App() {
             {t.label}
           </button>
         ))}
+
+        {/* User indicator + logout */}
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-[10px] text-neutral-500 truncate max-w-[120px]">
+            {userEmail}
+          </span>
+          <button
+            onClick={handleLogout}
+            className="text-[10px] text-neutral-600 hover:text-red-400 transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
 
       {/* Content */}

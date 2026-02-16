@@ -10,20 +10,53 @@ use std::path::PathBuf;
 pub struct AppSettings {
     pub server_url: String,
     pub auth_token: String,
+    #[serde(default)]
+    pub user_email: String,
     pub capture_interval_ms: u64,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            server_url: "ws://localhost:8000/ws/agent".into(),
+            server_url: "https://rho-bot-production.up.railway.app".into(),
             auth_token: String::new(),
+            user_email: String::new(),
             capture_interval_ms: 500,
         }
     }
 }
 
 impl AppSettings {
+    /// Derive the WebSocket agent URL from the REST base URL.
+    pub fn ws_agent_url(&self) -> String {
+        let base = self.server_url.trim_end_matches('/');
+        let ws_base = if base.starts_with("https://") {
+            base.replacen("https://", "wss://", 1)
+        } else if base.starts_with("http://") {
+            base.replacen("http://", "ws://", 1)
+        } else {
+            format!("wss://{}", base)
+        };
+        format!("{}/ws/agent", ws_base)
+    }
+
+    /// Derive the WebSocket record URL from the REST base URL.
+    pub fn ws_record_url(&self) -> String {
+        let base = self.server_url.trim_end_matches('/');
+        let ws_base = if base.starts_with("https://") {
+            base.replacen("https://", "wss://", 1)
+        } else if base.starts_with("http://") {
+            base.replacen("http://", "ws://", 1)
+        } else {
+            format!("wss://{}", base)
+        };
+        format!("{}/ws/record", ws_base)
+    }
+
+    pub fn is_logged_in(&self) -> bool {
+        !self.auth_token.is_empty()
+    }
+
     fn config_path() -> Option<PathBuf> {
         dirs::config_dir().map(|d| d.join("rho-bot").join("settings.json"))
     }

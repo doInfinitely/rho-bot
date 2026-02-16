@@ -4,12 +4,14 @@ import { invoke } from "@tauri-apps/api/core";
 interface Settings {
   server_url: string;
   auth_token: string;
+  user_email: string;
   capture_interval_ms: number;
 }
 
 const defaults: Settings = {
-  server_url: "ws://localhost:8000/ws/agent",
+  server_url: "https://rho-bot-production.up.railway.app",
   auth_token: "",
+  user_email: "",
   capture_interval_ms: 500,
 };
 
@@ -47,20 +49,9 @@ export default function SettingsPanel() {
           }
           className="w-full px-3 py-2 text-sm bg-neutral-900 border border-neutral-800 rounded-lg focus:outline-none focus:border-rho-500"
         />
-      </div>
-
-      <div>
-        <label className="block text-xs text-neutral-400 mb-1">
-          Auth Token (JWT)
-        </label>
-        <input
-          type="password"
-          value={settings.auth_token}
-          onChange={(e) =>
-            setSettings((s) => ({ ...s, auth_token: e.target.value }))
-          }
-          className="w-full px-3 py-2 text-sm bg-neutral-900 border border-neutral-800 rounded-lg focus:outline-none focus:border-rho-500"
-        />
+        <p className="mt-1 text-[10px] text-neutral-600">
+          REST base URL. WebSocket connections are derived automatically.
+        </p>
       </div>
 
       <div>
@@ -82,6 +73,12 @@ export default function SettingsPanel() {
           className="w-full px-3 py-2 text-sm bg-neutral-900 border border-neutral-800 rounded-lg focus:outline-none focus:border-rho-500"
         />
       </div>
+
+      {settings.user_email && (
+        <div className="text-xs text-neutral-500">
+          Signed in as <span className="text-neutral-300">{settings.user_email}</span>
+        </div>
+      )}
 
       <button
         onClick={handleSave}

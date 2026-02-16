@@ -19,8 +19,156 @@ use settings::AppSettings;
 /// Tauri commands exposed to the React frontend.
 mod commands {
     use super::*;
+    use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use tauri::State;
+
+    #[derive(Deserialize)]
+    pub struct AuthCredentials {
+        pub email: String,
+        pub password: String,
+        pub server_url: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct TokenResponse {
+        access_token: String,
+        token_type: String,
+    }
+
+    #[derive(Serialize)]
+    pub struct AuthResult {
+        pub email: String,
+        pub token: String,
+    }
+
+    #[tauri::command]
+    pub async fn login(
+        settings_state: State<'_, Arc<tokio::sync::Mutex<AppSettings>>>,
+        handle: State<'_, Arc<AgentHandle>>,
+        creds: AuthCredentials,
+    ) -> Result<AuthResult, String> {
+        let base_url = {
+            let s = settings_state.lock().await;
+            creds.server_url.clone().unwrap_or_else(|| s.server_url.clone())
+        };
+        let url = format!("{}/auth/login", base_url.trim_end_matches('/'));
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .json(&serde_json::json!({
+                "email": creds.email,
+                "password": creds.password,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Login failed ({}): {}", status, body));
+        }
+
+        let token_resp: TokenResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response: {}", e))?;
+
+        // Persist to settings
+        let mut settings = settings_state.lock().await;
+        settings.auth_token = token_resp.access_token.clone();
+        settings.user_email = creds.email.clone();
+        if let Some(ref url) = creds.server_url {
+            settings.server_url = url.clone();
+        }
+        settings.save()?;
+        handle.update_settings(settings.clone()).await;
+
+        Ok(AuthResult {
+            email: creds.email,
+            token: token_resp.access_token,
+        })
+    }
+
+    #[tauri::command]
+    pub async fn signup(
+        settings_state: State<'_, Arc<tokio::sync::Mutex<AppSettings>>>,
+        handle: State<'_, Arc<AgentHandle>>,
+        creds: AuthCredentials,
+    ) -> Result<AuthResult, String> {
+        let base_url = {
+            let s = settings_state.lock().await;
+            creds.server_url.clone().unwrap_or_else(|| s.server_url.clone())
+        };
+        let url = format!("{}/auth/signup", base_url.trim_end_matches('/'));
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .json(&serde_json::json!({
+                "email": creds.email,
+                "password": creds.password,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Signup failed ({}): {}", status, body));
+        }
+
+        let token_resp: TokenResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response: {}", e))?;
+
+        // Persist to settings
+        let mut settings = settings_state.lock().await;
+        settings.auth_token = token_resp.access_token.clone();
+        settings.user_email = creds.email.clone();
+        if let Some(ref url) = creds.server_url {
+            settings.server_url = url.clone();
+        }
+        settings.save()?;
+        handle.update_settings(settings.clone()).await;
+
+        Ok(AuthResult {
+            email: creds.email,
+            token: token_resp.access_token,
+        })
+    }
+
+    #[tauri::command]
+    pub async fn logout(
+        settings_state: State<'_, Arc<tokio::sync::Mutex<AppSettings>>>,
+        handle: State<'_, Arc<AgentHandle>>,
+    ) -> Result<(), String> {
+        handle.stop().await;
+
+        let mut settings = settings_state.lock().await;
+        settings.auth_token = String::new();
+        settings.user_email = String::new();
+        settings.save()?;
+        handle.update_settings(settings.clone()).await;
+
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn get_auth_state(
+        settings: State<'_, Arc<tokio::sync::Mutex<AppSettings>>>,
+    ) -> Result<Value, String> {
+        let s = settings.lock().await;
+        Ok(serde_json::json!({
+            "logged_in": s.is_logged_in(),
+            "email": s.user_email,
+            "server_url": s.server_url,
+        }))
+    }
 
     #[tauri::command]
     pub async fn get_agent_state(handle: State<'_, Arc<AgentHandle>>) -> Result<String, String> {
@@ -141,6 +289,10 @@ pub fn run() {
         .manage(settings)
         .manage(agent)
         .invoke_handler(tauri::generate_handler![
+            commands::login,
+            commands::signup,
+            commands::logout,
+            commands::get_auth_state,
             commands::get_agent_state,
             commands::start_agent,
             commands::stop_agent,

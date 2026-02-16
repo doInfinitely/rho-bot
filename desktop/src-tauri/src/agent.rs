@@ -160,14 +160,14 @@ async fn run_agent_loop(
 ) -> Result<(), String> {
     let session_id = Uuid::new_v4().to_string();
 
-    let (server_url, token, interval) = {
+    let (ws_url, token, interval) = {
         let s = settings.lock().await;
-        (s.server_url.clone(), s.auth_token.clone(), s.capture_interval_ms)
+        (s.ws_agent_url(), s.auth_token.clone(), s.capture_interval_ms)
     };
 
     // Connect
     *state.lock().await = "connected".into();
-    let mut client = WsClient::connect(&server_url, &token).await?;
+    let mut client = WsClient::connect(&ws_url, &token).await?;
     *state.lock().await = "running".into();
 
     loop {
@@ -265,17 +265,14 @@ async fn run_recording_loop(
 ) -> Result<(), String> {
     let session_id = Uuid::new_v4().to_string();
 
-    let (server_url, token, interval) = {
+    let (ws_url, token, interval) = {
         let s = settings.lock().await;
-        (s.server_url.clone(), s.auth_token.clone(), s.capture_interval_ms)
+        (s.ws_record_url(), s.auth_token.clone(), s.capture_interval_ms)
     };
-
-    // Derive the recording endpoint from the agent endpoint
-    let record_url = server_url.replace("/ws/agent", "/ws/record");
 
     // Connect
     *state.lock().await = "connected".into();
-    let mut client = WsClient::connect(&record_url, &token).await?;
+    let mut client = WsClient::connect(&ws_url, &token).await?;
     *state.lock().await = "recording".into();
 
     loop {
