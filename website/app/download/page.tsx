@@ -22,7 +22,7 @@ const INSTALLERS: Record<
   },
   windows: {
     label: "Download for Windows",
-    file: "rho-bot_x64-setup.exe",
+    file: "rho-bot_setup_x64.exe",
     note: "Windows 10+ &middot; 64-bit",
   },
   linux: {

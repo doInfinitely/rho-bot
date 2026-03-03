@@ -73,4 +73,5 @@ jobs:
           releaseBody: "Desktop agent release ${{ github.ref_name }}"
           releaseDraft: false
           prerelease: false
+          releaseAssetNamePattern: "rho-bot[_setup]_[arch].[ext]"
           args: ${{ matrix.args }}
