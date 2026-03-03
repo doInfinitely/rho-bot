@@ -17,17 +17,17 @@ const INSTALLERS: Record<
 > = {
   macos: {
     label: "Download for macOS",
-    file: "rho-bot_0.1.0_aarch64.dmg",
+    file: "rho-bot_aarch64.dmg",
     note: "macOS 13+ &middot; Apple Silicon",
   },
   windows: {
     label: "Download for Windows",
-    file: "rho-bot-setup.exe",
+    file: "rho-bot_x64-setup.exe",
     note: "Windows 10+ &middot; 64-bit",
   },
   linux: {
     label: "Download for Linux",
-    file: "rho-bot.AppImage",
+    file: "rho-bot_amd64.AppImage",
     note: "Ubuntu 22.04+ / Fedora 38+ &middot; x86_64",
   },
 };
