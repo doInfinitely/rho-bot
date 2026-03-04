@@ -286,6 +286,7 @@ pub fn run() {
     env_logger::init();
 
     let loaded_settings = settings::AppSettings::load().unwrap_or_default();
+    let show_window_on_start = !loaded_settings.is_logged_in();
     let settings = Arc::new(tokio::sync::Mutex::new(loaded_settings));
     let agent = Arc::new(AgentHandle::new());
 
@@ -340,6 +341,14 @@ pub fn run() {
             }
 
             builder.build(app)?;
+
+            // Show the window immediately when the user needs to log in
+            if show_window_on_start {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
 
             Ok(())
         })
