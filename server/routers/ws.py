@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -16,6 +17,22 @@ from server.services.billing_service import check_and_increment_quota
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["agent"])
+
+# Track active WebSocket connections per user so we can kick old sessions.
+_active_agent_ws: dict[str, list[WebSocket]] = defaultdict(list)
+_active_record_ws: dict[str, list[WebSocket]] = defaultdict(list)
+
+
+async def _kick_existing(registry: dict[str, list[WebSocket]], user_id: str) -> None:
+    """Close all existing WebSocket connections for *user_id* in *registry*."""
+    existing = registry.pop(user_id, [])
+    for old_ws in existing:
+        try:
+            await old_ws.close(code=4002, reason="Session replaced by new login")
+        except Exception:
+            pass  # already closed
+    if existing:
+        logger.info("Kicked %d existing connection(s) for user %s", len(existing), user_id)
 
 
 @router.websocket("/ws/agent")
@@ -46,6 +63,10 @@ async def agent_ws(ws: WebSocket):
 
     user_id: str = payload.get("sub", "")
     logger.info("Agent WebSocket authenticated for user %s", user_id)
+
+    # Kick any existing agent connections for this user (one machine at a time)
+    await _kick_existing(_active_agent_ws, user_id)
+    _active_agent_ws[user_id].append(ws)
 
     # Import here to avoid circular imports at module level
     from server.main import context_service  # noqa: WPS433
@@ -95,6 +116,12 @@ async def agent_ws(ws: WebSocket):
             await ws.close(code=1011)
         except Exception:
             pass
+    finally:
+        # Unregister this connection
+        try:
+            _active_agent_ws[user_id].remove(ws)
+        except ValueError:
+            pass
 
 
 @router.websocket("/ws/record")
@@ -126,6 +153,10 @@ async def record_ws(ws: WebSocket):
 
     user_id: str = payload.get("sub", "")
     logger.info("Recording WebSocket authenticated for user %s", user_id)
+
+    # Kick any existing recording connections for this user
+    await _kick_existing(_active_record_ws, user_id)
+    _active_record_ws[user_id].append(ws)
 
     # Import here to avoid circular imports at module level
     from server.main import context_service  # noqa: WPS433
@@ -166,4 +197,10 @@ async def record_ws(ws: WebSocket):
         try:
             await ws.close(code=1011)
         except Exception:
+            pass
+    finally:
+        # Unregister this connection
+        try:
+            _active_record_ws[user_id].remove(ws)
+        except ValueError:
             pass
