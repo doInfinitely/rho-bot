@@ -271,6 +271,11 @@ async fn run_agent_loop(
                 consecutive_errors = 0;
 
                 // 6. Check for server-side errors
+                log::info!("Received action JSON: {}", action_json);
+                match serde_json::from_value::<Action>(action_json.clone()) {
+                    Err(e) => log::error!("Failed to deserialize action: {}. JSON: {}", e, action_json),
+                    _ => {}
+                }
                 if let Ok(action) = serde_json::from_value::<Action>(action_json.clone()) {
                     if let Some(ref error_msg) = action.error {
                         if error_msg.starts_with("Server error:") {

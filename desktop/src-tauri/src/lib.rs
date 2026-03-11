@@ -302,7 +302,8 @@ pub fn run() {
             // Build tray menu
             let quit = MenuItemBuilder::with_id("quit", "Quit rho-bot").build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+            let logout = MenuItemBuilder::with_id("logout", "Log out").build(app)?;
+            let menu = MenuBuilder::new(app).items(&[&show, &logout, &quit]).build()?;
 
             // Build tray icon using the bundled icon
             let icon = app.default_window_icon().cloned();
@@ -316,6 +317,29 @@ pub fn run() {
                             if let Some(w) = app.get_webview_window("main") {
                                 let _ = w.show();
                                 let _ = w.set_focus();
+                            }
+                        }
+                        "logout" => {
+                            let handle = app.state::<Arc<AgentHandle>>();
+                            let settings = app.state::<Arc<tokio::sync::Mutex<AppSettings>>>();
+                            let handle = handle.inner().clone();
+                            let settings = settings.inner().clone();
+                            tauri::async_runtime::spawn(async move {
+                                handle.stop().await;
+                                let mut s = settings.lock().await;
+                                s.auth_token = String::new();
+                                s.user_email = String::new();
+                                let _ = s.save();
+                                handle.update_settings(s.clone()).await;
+                            });
+                            // Show the window so the user sees the login screen
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                            // Trigger a frontend reload to pick up the cleared auth state
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.eval("window.location.reload()");
                             }
                         }
                         _ => {}

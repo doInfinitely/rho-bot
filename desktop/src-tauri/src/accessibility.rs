@@ -38,7 +38,17 @@ mod macos {
         if err != K_AX_ERROR_SUCCESS || value.is_null() {
             return None;
         }
-        // Try to interpret as CFString
+        // Verify the value is actually a CFString before casting
+        extern "C" {
+            fn CFGetTypeID(cf: *const c_void) -> u64;
+            fn CFStringGetTypeID() -> u64;
+        }
+        let type_id = unsafe { CFGetTypeID(value) };
+        let string_type_id = unsafe { CFStringGetTypeID() };
+        if type_id != string_type_id {
+            unsafe { CFRelease(value) };
+            return None;
+        }
         let cf_str = unsafe { CFString::wrap_under_create_rule(value as CFStringRef) };
         Some(cf_str.to_string())
     }

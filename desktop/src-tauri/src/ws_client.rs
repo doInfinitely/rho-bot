@@ -44,20 +44,28 @@ impl WsClient {
             .await
             .map_err(|e| format!("Send failed: {}", e))?;
 
-        // Wait for response
-        match self.read.next().await {
-            Some(Ok(Message::Text(text))) => {
-                serde_json::from_str(&text).map_err(|e| format!("Parse error: {}", e))
+        // Wait for response, skipping Ping/Pong frames
+        loop {
+            match self.read.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    return serde_json::from_str(&text)
+                        .map_err(|e| format!("Parse error: {}", e));
+                }
+                Some(Ok(Message::Close(frame))) => {
+                    let detail = frame
+                        .map(|f| format!("code={}, reason={}", f.code, f.reason))
+                        .unwrap_or_else(|| "no details".into());
+                    return Err(format!("Server closed connection ({})", detail));
+                }
+                Some(Ok(Message::Ping(data))) => {
+                    let _ = self.write.send(Message::Pong(data)).await;
+                    continue;
+                }
+                Some(Ok(Message::Pong(_))) => continue,
+                Some(Err(e)) => return Err(format!("Read error: {}", e)),
+                None => return Err("Connection closed unexpectedly".into()),
+                _ => continue,
             }
-            Some(Ok(Message::Close(frame))) => {
-                let detail = frame
-                    .map(|f| format!("code={}, reason={}", f.code, f.reason))
-                    .unwrap_or_else(|| "no details".into());
-                Err(format!("Server closed connection ({})", detail))
-            }
-            Some(Err(e)) => Err(format!("Read error: {}", e)),
-            None => Err("Connection closed unexpectedly".into()),
-            _ => Err("Unexpected message type".into()),
         }
     }
 
@@ -68,13 +76,20 @@ impl WsClient {
             .await
             .map_err(|e| format!("Send failed: {}", e))?;
 
-        // Wait for ack
-        match self.read.next().await {
-            Some(Ok(Message::Text(_))) => Ok(()),
-            Some(Ok(Message::Close(_))) => Err("Server closed connection".into()),
-            Some(Err(e)) => Err(format!("Read error: {}", e)),
-            None => Err("Connection closed".into()),
-            _ => Err("Unexpected message type".into()),
+        // Wait for ack, skipping Ping/Pong frames
+        loop {
+            match self.read.next().await {
+                Some(Ok(Message::Text(_))) => return Ok(()),
+                Some(Ok(Message::Close(_))) => return Err("Server closed connection".into()),
+                Some(Ok(Message::Ping(data))) => {
+                    let _ = self.write.send(Message::Pong(data)).await;
+                    continue;
+                }
+                Some(Ok(Message::Pong(_))) => continue,
+                Some(Err(e)) => return Err(format!("Read error: {}", e)),
+                None => return Err("Connection closed".into()),
+                _ => continue,
+            }
         }
     }
 

@@ -25,6 +25,20 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 # ---- helpers ----
 
 async def _latest_session(user_id: str, db: AsyncSession) -> Session | None:
+    # Prefer the active (non-ended) session with the most actions — this is
+    # the one the desktop agent is actually writing to.  Fall back to the most
+    # recently created session if nothing is active.
+    result = await db.execute(
+        select(Session)
+        .where(Session.user_id == user_id, Session.ended_at.is_(None))
+        .order_by(Session.action_count.desc(), Session.started_at.desc())
+        .limit(1)
+    )
+    session = result.scalar_one_or_none()
+    if session is not None:
+        return session
+
+    # No active session — return the most recent one overall
     result = await db.execute(
         select(Session)
         .where(Session.user_id == user_id)

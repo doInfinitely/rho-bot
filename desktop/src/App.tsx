@@ -8,10 +8,12 @@ import ActivityLog from "./components/ActivityLog";
 export type AgentState = "disconnected" | "connected" | "connecting" | "reconnecting" | "running" | "recording" | "paused" | "quota_exceeded";
 
 export interface ActionEntry {
-  id: string;
+  action_id: string;
   type: string;
-  timestamp: number;
   confidence: number;
+  coordinates?: number[] | null;
+  text?: string | null;
+  key?: string | null;
   error?: string | null;
 }
 
