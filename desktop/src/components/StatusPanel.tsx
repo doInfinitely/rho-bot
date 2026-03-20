@@ -136,7 +136,7 @@ export default function StatusPanel({ state, error }: Props) {
       <div className="flex gap-2">
         <button
           onClick={handleStart}
-          disabled={agentBusy}
+          disabled={agentBusy || !!missingPerms}
           className="px-4 py-2 text-sm font-medium rounded-lg bg-rho-600 hover:bg-rho-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Start Agent
