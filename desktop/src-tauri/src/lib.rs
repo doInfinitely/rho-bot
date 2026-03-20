@@ -328,11 +328,19 @@ pub fn run() {
                 let settings = settings_for_setup.clone();
                 tauri::async_runtime::spawn(async move {
                     let s = settings.lock().await;
+                    let use_marionette = s.use_marionette;
                     log::info!("Auto-starting recording on launch");
                     agent.update_settings(s.clone()).await;
                     drop(s);
                     if let Err(e) = agent.start_recording().await {
                         log::error!("Failed to auto-start recording: {}", e);
+                    }
+                    // Auto-start agent in standby mode for marionette
+                    if use_marionette {
+                        log::info!("Auto-starting marionette standby agent");
+                        if let Err(e) = agent.start().await {
+                            log::error!("Failed to auto-start standby agent: {}", e);
+                        }
                     }
                 });
             }
