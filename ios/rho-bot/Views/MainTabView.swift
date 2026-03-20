@@ -6,6 +6,11 @@ struct MainTabView: View {
 
     var body: some View {
         TabView {
+            ChatView()
+                .tabItem {
+                    Label("Rho", systemImage: "bubble.left.and.bubble.right")
+                }
+
             DashboardView()
                 .environmentObject(agentVM)
                 .tabItem {

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var authVM: AuthViewModel
-    @State private var serverURL: String = APIClient.shared.baseURL
+    @StateObject private var tts = ElevenLabsService.shared
 
     var body: some View {
         NavigationStack {
@@ -18,20 +18,17 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Server") {
-                    TextField("Server URL", text: $serverURL)
-                        .autocapitalization(.none)
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-                        .onSubmit {
-                            APIClient.shared.baseURL = serverURL
-                        }
+                Section("Text to Speech") {
+                    Toggle("Enable TTS", isOn: $tts.ttsEnabled)
 
-                    Button("Reset to Default") {
-                        serverURL = "https://rho-bot-production.up.railway.app"
-                        APIClient.shared.baseURL = serverURL
+                    if tts.ttsEnabled {
+                        VoicePickerView(voices: tts.voices, selectedVoiceId: $tts.selectedVoiceId)
+
+                        Button("Test Voice") {
+                            Task { await tts.speak("Hello, I'm Rho. How can I help you today?") }
+                        }
+                        .disabled(tts.isPlaying)
                     }
-                    .font(.caption)
                 }
 
                 Section("About") {
@@ -50,6 +47,11 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .task {
+                if tts.voices.isEmpty {
+                    await tts.fetchVoices()
+                }
+            }
         }
     }
 }

@@ -22,6 +22,13 @@
 		AA000013 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000013 /* SettingsView.swift */; };
 		AA000014 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB000014 /* Assets.xcassets */; };
 		AA000015 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB000015 /* Preview Assets.xcassets */; };
+		AA000016 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000016 /* ChatView.swift */; };
+		AA000017 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000017 /* ChatViewModel.swift */; };
+		AA000018 /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000018 /* WebSocketClient.swift */; };
+		AA000019 /* ElevenLabsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000019 /* ElevenLabsService.swift */; };
+		AA000020 /* Kernels.metal in Sources */ = {isa = PBXBuildFile; fileRef = AB000020 /* Kernels.metal */; };
+		AA000021 /* FluidRecordButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000021 /* FluidRecordButton.swift */; };
+		AA000022 /* VoicePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000022 /* VoicePickerView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +47,13 @@
 		AB000013 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		AB000014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AB000015 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		AB000016 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		AB000017 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		AB000018 /* WebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketClient.swift; sourceTree = "<group>"; };
+		AB000019 /* ElevenLabsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElevenLabsService.swift; sourceTree = "<group>"; };
+		AB000020 /* Kernels.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Kernels.metal; sourceTree = "<group>"; };
+		AB000021 /* FluidRecordButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluidRecordButton.swift; sourceTree = "<group>"; };
+		AB000022 /* VoicePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePickerView.swift; sourceTree = "<group>"; };
 		AC000001 /* rho-bot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "rho-bot.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -66,6 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				AB000001 /* rho_botApp.swift */,
+				AB000020 /* Kernels.metal */,
 				AE000003 /* Models */,
 				AE000004 /* Services */,
 				AE000005 /* ViewModels */,
@@ -90,6 +105,8 @@
 			children = (
 				AB000004 /* KeychainHelper.swift */,
 				AB000005 /* APIClient.swift */,
+				AB000018 /* WebSocketClient.swift */,
+			AB000019 /* ElevenLabsService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -99,6 +116,7 @@
 			children = (
 				AB000006 /* AuthViewModel.swift */,
 				AB000007 /* AgentViewModel.swift */,
+				AB000017 /* ChatViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -112,6 +130,9 @@
 				AB000011 /* GoalInputView.swift */,
 				AB000012 /* SessionsView.swift */,
 				AB000013 /* SettingsView.swift */,
+				AB000016 /* ChatView.swift */,
+			AB000021 /* FluidRecordButton.swift */,
+			AB000022 /* VoicePickerView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -215,6 +236,13 @@
 				AA000011 /* GoalInputView.swift in Sources */,
 				AA000012 /* SessionsView.swift in Sources */,
 				AA000013 /* SettingsView.swift in Sources */,
+				AA000016 /* ChatView.swift in Sources */,
+				AA000017 /* ChatViewModel.swift in Sources */,
+				AA000018 /* WebSocketClient.swift in Sources */,
+				AA000019 /* ElevenLabsService.swift in Sources */,
+				AA000020 /* Kernels.metal in Sources */,
+				AA000021 /* FluidRecordButton.swift in Sources */,
+				AA000022 /* VoicePickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -354,6 +382,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "rho-bot";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Rho uses the microphone for voice input";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -383,6 +412,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "rho-bot";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Rho uses the microphone for voice input";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
