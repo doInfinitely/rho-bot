@@ -256,6 +256,26 @@ mod commands {
         Ok(())
     }
 
+    /// Start the agent in marionette mode with a specific task.
+    #[tauri::command]
+    pub async fn start_marionette_agent(
+        handle: State<'_, Arc<AgentHandle>>,
+        task: String,
+    ) -> Result<(), String> {
+        handle.set_task(task).await;
+        handle.start().await.map_err(|e| e.to_string())
+    }
+
+    /// Set the task for the marionette agent (can be called before start_agent).
+    #[tauri::command]
+    pub async fn set_agent_task(
+        handle: State<'_, Arc<AgentHandle>>,
+        task: String,
+    ) -> Result<(), String> {
+        handle.set_task(task).await;
+        Ok(())
+    }
+
     #[tauri::command]
     pub async fn get_recent_actions(
         handle: State<'_, Arc<AgentHandle>>,
@@ -405,6 +425,8 @@ pub fn run() {
             commands::get_agent_state,
             commands::start_agent,
             commands::stop_agent,
+            commands::start_marionette_agent,
+            commands::set_agent_task,
             commands::get_recent_actions,
             commands::get_settings,
             commands::save_settings,

@@ -28,6 +28,8 @@ pub struct AgentHandle {
     running: Arc<Mutex<bool>>,
     recording_stop: Arc<Notify>,
     recording: Arc<Mutex<bool>>,
+    /// The task description for the marionette agent.
+    task: Arc<Mutex<String>>,
 }
 
 impl AgentHandle {
@@ -42,6 +44,7 @@ impl AgentHandle {
             running: Arc::new(Mutex::new(false)),
             recording_stop: Arc::new(Notify::new()),
             recording: Arc::new(Mutex::new(false)),
+            task: Arc::new(Mutex::new(String::new())),
         }
     }
 
@@ -51,6 +54,16 @@ impl AgentHandle {
 
     pub async fn last_error(&self) -> String {
         self.last_error.lock().await.clone()
+    }
+
+    /// Set the task for the marionette agent to execute.
+    pub async fn set_task(&self, task: String) {
+        *self.task.lock().await = task;
+    }
+
+    /// Get the current task.
+    pub async fn get_task(&self) -> String {
+        self.task.lock().await.clone()
     }
 
     pub async fn start(&self) -> Result<(), String> {
@@ -72,25 +85,54 @@ impl AgentHandle {
         let stop_signal = self.stop_signal.clone();
         let running = self.running.clone();
 
-        tokio::spawn(async move {
-            let result = run_agent_loop(
-                state.clone(),
-                last_error.clone(),
-                settings,
-                event_buffer,
-                recent_actions,
-                stop_signal,
-            )
-            .await;
+        // Check if we should use marionette mode
+        let (use_marionette, task) = {
+            let s = settings.lock().await;
+            (s.use_marionette, self.task.lock().await.clone())
+        };
 
-            if let Err(e) = result {
-                log::error!("Agent loop error: {}", e);
-                *last_error.lock().await = e;
-            }
+        if use_marionette {
+            tokio::spawn(async move {
+                let result = run_marionette_loop(
+                    state.clone(),
+                    last_error.clone(),
+                    settings,
+                    event_buffer,
+                    recent_actions,
+                    stop_signal,
+                    task,
+                )
+                .await;
 
-            *state.lock().await = "disconnected".into();
-            *running.lock().await = false;
-        });
+                if let Err(e) = result {
+                    log::error!("Marionette loop error: {}", e);
+                    *last_error.lock().await = e;
+                }
+
+                *state.lock().await = "disconnected".into();
+                *running.lock().await = false;
+            });
+        } else {
+            tokio::spawn(async move {
+                let result = run_agent_loop(
+                    state.clone(),
+                    last_error.clone(),
+                    settings,
+                    event_buffer,
+                    recent_actions,
+                    stop_signal,
+                )
+                .await;
+
+                if let Err(e) = result {
+                    log::error!("Agent loop error: {}", e);
+                    *last_error.lock().await = e;
+                }
+
+                *state.lock().await = "disconnected".into();
+                *running.lock().await = false;
+            });
+        }
 
         Ok(())
     }
@@ -336,6 +378,255 @@ async fn run_agent_loop(
         }
 
         // 9. Sleep (back off if capture keeps failing)
+        let sleep_ms = if consecutive_errors > 5 {
+            interval.max(5000)
+        } else {
+            interval
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+    }
+
+    client.close().await;
+    Ok(())
+}
+
+/// Marionette remote agent loop: captures desktop state, sends to marionette
+/// server which calls LLM, receives actions back, executes them locally.
+async fn run_marionette_loop(
+    state: Arc<Mutex<String>>,
+    last_error: Arc<Mutex<String>>,
+    settings: Arc<Mutex<AppSettings>>,
+    event_buffer: Arc<EventBuffer>,
+    recent_actions: Arc<Mutex<Vec<Value>>>,
+    stop_signal: Arc<Notify>,
+    task: String,
+) -> Result<(), String> {
+    if task.is_empty() {
+        return Err("No task provided for marionette agent".into());
+    }
+
+    let session_id = Uuid::new_v4().to_string();
+
+    let (ws_url, interval) = {
+        let s = settings.lock().await;
+        (s.ws_marionette_url(), s.capture_interval_ms)
+    };
+
+    log::info!("Marionette connecting to {} for task: {}", ws_url, task);
+
+    // Connect with retries (no auth needed for marionette)
+    let mut client: Option<WsClient> = None;
+    let mut attempts: u32 = 0;
+
+    while attempts < MAX_RECONNECT_ATTEMPTS {
+        if should_stop(&stop_signal).await {
+            return Ok(());
+        }
+
+        *state.lock().await = format!("connecting (attempt {})", attempts + 1);
+
+        match WsClient::connect_no_auth(&ws_url).await {
+            Ok(c) => {
+                log::info!("Marionette WebSocket connected on attempt {}", attempts + 1);
+                client = Some(c);
+                break;
+            }
+            Err(e) => {
+                attempts += 1;
+                let msg = format!("Marionette connect failed (attempt {}): {}", attempts, e);
+                log::warn!("{}", msg);
+                *last_error.lock().await = msg;
+
+                if attempts < MAX_RECONNECT_ATTEMPTS {
+                    let backoff = std::time::Duration::from_secs(2u64.pow(attempts.min(4)));
+                    tokio::time::sleep(backoff).await;
+                }
+            }
+        }
+    }
+
+    let mut client = client.ok_or_else(|| {
+        format!("Failed to connect to marionette after {} attempts", MAX_RECONNECT_ATTEMPTS)
+    })?;
+
+    // Send start message with task and settings
+    *state.lock().await = "starting".into();
+    let agent_settings = json!({
+        "llm_provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "max_steps": 50,
+    });
+
+    if let Err(e) = client.send_start(&task, &agent_settings).await {
+        return Err(format!("Failed to start marionette task: {}", e));
+    }
+
+    log::info!("Marionette task started, entering agent loop");
+    *state.lock().await = "running".into();
+    *last_error.lock().await = String::new();
+
+    let mut consecutive_errors: u32 = 0;
+
+    loop {
+        if should_stop(&stop_signal).await {
+            break;
+        }
+
+        // 1. Capture screenshot
+        let screenshot = match capture::capture_screen() {
+            Ok(s) => { consecutive_errors = 0; s }
+            Err(e) => {
+                log::warn!("Screenshot failed: {}", e);
+                consecutive_errors += 1;
+                String::new()
+            }
+        };
+
+        // 2. Read accessibility tree
+        let tree = accessibility::read_frontmost_tree();
+
+        // 3. Gather recent events
+        let events = event_buffer.drain().await;
+
+        // 4. Build context bundle
+        let (app_name, _pid) = platform::frontmost_app();
+        let (wx, wy, ww, wh) = platform::focused_window_bounds();
+
+        let context = json!({
+            "session_id": session_id,
+            "timestamp": now(),
+            "screenshot_b64": screenshot,
+            "accessibility_tree": tree,
+            "recent_events": events,
+            "active_app": app_name,
+            "window_bounds": {"x": wx, "y": wy, "width": ww, "height": wh}
+        });
+
+        // 5. Send context and receive response
+        match client.send_marionette_context(&context).await {
+            Ok(response) => {
+                consecutive_errors = 0;
+                let resp_type = response.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+                log::info!("Marionette response type: {}", resp_type);
+
+                match resp_type {
+                    "actions" => {
+                        // Execute the action batch
+                        if let Some(actions_arr) = response.get("actions").and_then(|a| a.as_array()) {
+                            let actions: Vec<Action> = actions_arr
+                                .iter()
+                                .filter_map(|a| serde_json::from_value::<Action>(a.clone()).ok())
+                                .collect();
+
+                            if !actions.is_empty() {
+                                log::info!("Executing {} actions", actions.len());
+                                if let Err(e) = executor::execute_batch(&actions) {
+                                    log::error!("Batch execution failed: {}", e);
+                                }
+                            }
+                        }
+
+                        // Log for UI
+                        let mut log_actions = recent_actions.lock().await;
+                        log_actions.push(response);
+                        let len = log_actions.len();
+                        if len > 50 {
+                            log_actions.drain(..len - 50);
+                        }
+                    }
+
+                    "done" => {
+                        let result = response.get("result")
+                            .and_then(|r| r.as_str())
+                            .unwrap_or("Task completed");
+                        log::info!("Marionette task done: {}", result);
+
+                        let mut log_actions = recent_actions.lock().await;
+                        log_actions.push(response);
+                        break;
+                    }
+
+                    "ask_user" => {
+                        // TODO: Surface this to the desktop UI for user input
+                        let message = response.get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Agent is asking for input");
+                        log::info!("Marionette ask_user: {}", message);
+
+                        let mut log_actions = recent_actions.lock().await;
+                        log_actions.push(response);
+                        // For now, auto-respond with "yes" — in the future, show UI
+                        if let Err(e) = client.send_chat("yes, proceed").await {
+                            log::error!("Failed to send chat response: {}", e);
+                        }
+                    }
+
+                    "step" => {
+                        // Progress update — log it
+                        let mut log_actions = recent_actions.lock().await;
+                        log_actions.push(response);
+                        let len = log_actions.len();
+                        if len > 50 {
+                            log_actions.drain(..len - 50);
+                        }
+                    }
+
+                    "error" => {
+                        let msg = response.get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("Unknown error");
+                        log::error!("Marionette error: {}", msg);
+                        *last_error.lock().await = msg.to_string();
+                        consecutive_errors += 1;
+
+                        let mut log_actions = recent_actions.lock().await;
+                        log_actions.push(response);
+                    }
+
+                    other => {
+                        log::warn!("Unknown marionette response type: {}", other);
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Marionette communication failed: {}", e);
+                *last_error.lock().await = e.clone();
+                consecutive_errors += 1;
+
+                // Try to reconnect once
+                log::info!("Attempting marionette reconnect...");
+                *state.lock().await = "reconnecting".into();
+
+                match WsClient::connect_no_auth(&ws_url).await {
+                    Ok(mut new_client) => {
+                        // Re-send start message
+                        if let Err(e) = new_client.send_start(&task, &agent_settings).await {
+                            let msg = format!("Reconnected but start failed: {}", e);
+                            log::error!("{}", msg);
+                            *last_error.lock().await = msg.clone();
+                            return Err(msg);
+                        }
+                        log::info!("Marionette reconnected successfully");
+                        client = new_client;
+                        *state.lock().await = "running".into();
+                        *last_error.lock().await = String::new();
+                        continue;
+                    }
+                    Err(reconnect_err) => {
+                        let msg = format!(
+                            "Marionette reconnect failed: {}. Original: {}",
+                            reconnect_err, e
+                        );
+                        log::error!("{}", msg);
+                        *last_error.lock().await = msg.clone();
+                        return Err(msg);
+                    }
+                }
+            }
+        }
+
+        // Sleep between iterations
         let sleep_ms = if consecutive_errors > 5 {
             interval.max(5000)
         } else {

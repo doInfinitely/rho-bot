@@ -198,6 +198,18 @@ mod macos {
     }
 }
 
+/// Execute a batch of actions sequentially with a small delay between them.
+pub fn execute_batch(actions: &[Action]) -> Result<(), String> {
+    for (i, action) in actions.iter().enumerate() {
+        execute(action)?;
+        // Small delay between actions (except after the last one)
+        if i + 1 < actions.len() && action.action_type != "wait" && action.action_type != "noop" {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+    }
+    Ok(())
+}
+
 /// Execute an action on the local machine.
 pub fn execute(action: &Action) -> Result<(), String> {
     log::info!("Executing action: {:?}", action.action_type);

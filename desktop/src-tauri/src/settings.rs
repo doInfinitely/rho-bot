@@ -13,6 +13,16 @@ pub struct AppSettings {
     #[serde(default)]
     pub user_email: String,
     pub capture_interval_ms: u64,
+    /// Marionette server URL for remote LLM agent control.
+    #[serde(default = "default_marionette_url")]
+    pub marionette_url: String,
+    /// When true, the agent loop connects to marionette instead of rho-bot server.
+    #[serde(default)]
+    pub use_marionette: bool,
+}
+
+fn default_marionette_url() -> String {
+    "https://marionette-production.up.railway.app".into()
 }
 
 impl Default for AppSettings {
@@ -22,6 +32,8 @@ impl Default for AppSettings {
             auth_token: String::new(),
             user_email: String::new(),
             capture_interval_ms: 500,
+            marionette_url: default_marionette_url(),
+            use_marionette: false,
         }
     }
 }
@@ -62,6 +74,29 @@ impl AppSettings {
             base.replacen("http://", "ws://", 1)
         };
         format!("{}/ws/agent", ws_base)
+    }
+
+    /// Derive the WebSocket URL for the marionette remote agent endpoint.
+    pub fn ws_marionette_url(&self) -> String {
+        let mut url = self.marionette_url.trim().trim_end_matches('/').to_string();
+
+        // Convert https:// to wss://
+        if url.starts_with("https://") {
+            url = url.replacen("https://", "wss://", 1);
+        } else if url.starts_with("http://") {
+            url = url.replacen("http://", "ws://", 1);
+        } else if !url.starts_with("wss://") && !url.starts_with("ws://") {
+            url = format!("wss://{}", url);
+        }
+
+        // Strip existing path suffixes
+        for suffix in &["/ws/agent", "/ws"] {
+            if url.ends_with(suffix) {
+                url.truncate(url.len() - suffix.len());
+            }
+        }
+
+        format!("{}/ws/agent", url)
     }
 
     /// Derive the WebSocket record URL from the REST base URL.
