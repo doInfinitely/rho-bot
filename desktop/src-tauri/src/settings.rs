@@ -33,7 +33,7 @@ impl Default for AppSettings {
             user_email: String::new(),
             capture_interval_ms: 500,
             marionette_url: default_marionette_url(),
-            use_marionette: false,
+            use_marionette: true,
         }
     }
 }
