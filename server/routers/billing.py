@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
-PLAN_NAMES = {"free": "Free", "pro": "Pro", "team": "Team"}
-
 
 @router.get("/subscription", response_model=SubscriptionOut)
 async def subscription_info(
@@ -39,24 +37,25 @@ async def subscription_info(
     """Return the authenticated user's current subscription."""
     sub = await get_subscription(db, user.id)
     if sub is None:
-        # No subscription row yet — return the free defaults
         return SubscriptionOut(
             id="",
             plan_id="free",
-            plan_name="Free (Unlimited)",
+            plan_name="Free",
             status="active",
             tasks_used=0,
             tasks_limit=999_999_999,
+            amount=0,
         )
 
     return SubscriptionOut(
         id=sub.id,
         plan_id=sub.plan_id,
-        plan_name=PLAN_NAMES.get(sub.plan_id, sub.plan_id),
+        plan_name=sub.plan_id.title(),
         status=sub.status,
         current_period_end=sub.current_period_end,
         tasks_used=sub.tasks_used,
         tasks_limit=sub.tasks_limit,
+        amount=sub.amount or 0,
     )
 
 
@@ -66,15 +65,15 @@ async def checkout(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a Stripe Checkout session for a plan upgrade."""
-    if body.plan_id not in ("pro", "team"):
+    """Create a Stripe Checkout session for a pay-what-you-want amount."""
+    if body.amount <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid plan. Choose 'pro' or 'team'.",
+            detail="Amount must be greater than $0 to set up a subscription.",
         )
 
     try:
-        url = await create_checkout_session(db, user.id, user.email, body.plan_id)
+        url = await create_checkout_session(db, user.id, user.email, body.amount)
     except Exception as e:
         logger.error(f"Checkout error: {e}")
         raise HTTPException(

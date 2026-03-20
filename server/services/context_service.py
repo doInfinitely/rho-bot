@@ -18,6 +18,7 @@ from server.schemas.action import ActionPayload
 from server.schemas.context import ContextPayload
 from server.schemas.training import TrainingPayload
 from server.services.model_service import ModelService
+from server.services.screenshot_service import upload_screenshot
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,18 @@ class ContextService:
             timestamp=context.timestamp,
             active_app=context.active_app,
             accessibility_tree_json=json.dumps(context.accessibility_tree),
-            screenshot_path="",  # TODO: save screenshot to disk / object storage
+            screenshot_path="",
         )
         db.add(ctx_log)
+        await db.flush()  # populate ctx_log.id
+
+        # 1b. Upload screenshot to R2
+        screenshot_key = await upload_screenshot(
+            context.screenshot_b64,
+            f"screenshots/{context.session_id}/{ctx_log.id}.png",
+        )
+        if screenshot_key:
+            ctx_log.screenshot_path = screenshot_key
 
         # 2. Predict
         action = await self.model.predict_action(context)
@@ -64,7 +74,20 @@ class ContextService:
         )
         db.add(action_log)
 
-        # 4. Bump session action count
+        # 4. Auto-record training pair from agent predictions
+        training_pair = TrainingPair(
+            session_id=context.session_id,
+            user_id=user_id,
+            timestamp=context.timestamp,
+            active_app=context.active_app,
+            accessibility_tree_json=json.dumps(context.accessibility_tree),
+            screenshot_path=screenshot_key,
+            user_actions_json=action.model_dump_json(),
+            source="agent",
+        )
+        db.add(training_pair)
+
+        # 5. Bump session action count
         session = await db.get(Session, context.session_id)
         if session is not None:
             session.action_count = (session.action_count or 0) + 1
@@ -86,10 +109,21 @@ class ContextService:
             timestamp=payload.context.timestamp,
             active_app=payload.context.active_app,
             accessibility_tree_json=json.dumps(payload.context.accessibility_tree),
-            screenshot_path="",  # TODO: save screenshot to disk / object storage
+            screenshot_path="",
             user_actions_json=json.dumps(
                 [a.model_dump() for a in payload.user_actions]
             ),
+            source="recording",
         )
         db.add(pair)
+        await db.flush()  # populate pair.id
+
+        # Upload screenshot to R2
+        screenshot_key = await upload_screenshot(
+            payload.context.screenshot_b64,
+            f"training/{payload.context.session_id}/{pair.id}.png",
+        )
+        if screenshot_key:
+            pair.screenshot_path = screenshot_key
+
         await db.commit()

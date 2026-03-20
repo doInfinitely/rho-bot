@@ -105,12 +105,6 @@ impl AgentHandle {
     }
 
     pub async fn start_recording(&self) -> Result<(), String> {
-        let running = self.running.lock().await;
-        if *running {
-            return Err("Cannot record while agent is running".into());
-        }
-        drop(running);
-
         let mut recording = self.recording.lock().await;
         if *recording {
             return Err("Already recording".into());
@@ -392,6 +386,12 @@ async fn run_recording_loop(
         let (app_name, _pid) = platform::frontmost_app();
         let (wx, wy, ww, wh) = platform::focused_window_bounds();
 
+        // Read current auth state each iteration
+        let (user_email, logged_in) = {
+            let s = settings.lock().await;
+            (s.user_email.clone(), s.is_logged_in())
+        };
+
         let context = json!({
             "session_id": session_id,
             "timestamp": now(),
@@ -405,13 +405,15 @@ async fn run_recording_loop(
         // 2. Wait for the user to act
         tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
 
-        // 3. Drain input events that occurred during the interval
-        let user_actions = event_buffer.drain().await;
+        // 3. Snapshot input events (don't drain — agent loop may need them too)
+        let user_actions = event_buffer.snapshot().await;
 
         // 4. Send the context/action pair to the server
         let payload = json!({
             "context": context,
             "user_actions": user_actions,
+            "user_email": user_email,
+            "logged_in": logged_in,
         });
 
         if let Err(e) = client.send_training_pair(&payload).await {

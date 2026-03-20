@@ -74,6 +74,7 @@ class TrainingPair(Base):
     accessibility_tree_json = Column(Text, default="{}")
     screenshot_path = Column(String, default="")
     user_actions_json = Column(Text, default="[]")
+    source = Column(String, default="recording")  # "recording" or "agent"
 
 
 class Subscription(Base):
@@ -83,11 +84,12 @@ class Subscription(Base):
     user_id = Column(String, nullable=False, unique=True, index=True)
     stripe_customer_id = Column(String, nullable=True, unique=True)
     stripe_subscription_id = Column(String, nullable=True, unique=True)
-    plan_id = Column(String, nullable=False, default="free")  # free, pro, team
+    plan_id = Column(String, nullable=False, default="free")  # free, supporter
     status = Column(String, nullable=False, default="active")  # active, trialing, past_due, canceled, incomplete
     current_period_end = Column(Float, nullable=True)
     tasks_used = Column(Integer, default=0)
-    tasks_limit = Column(Integer, default=50)
+    tasks_limit = Column(Integer, default=999_999_999)
+    amount = Column(Integer, default=0)  # monthly amount in cents
 
 
 async def get_db() -> AsyncSession:
@@ -120,6 +122,8 @@ async def init_db():
     # ---- lightweight migrations (add columns to existing tables) ----
     migrations = [
         "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS goal TEXT DEFAULT ''",
+        "ALTER TABLE training_pairs ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'recording'",
+        "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS amount INTEGER DEFAULT 0",
     ]
 
     try:

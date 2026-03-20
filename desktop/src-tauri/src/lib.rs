@@ -82,6 +82,12 @@ mod commands {
         settings.server_url = base_url;
         settings.save()?;
         handle.update_settings(settings.clone()).await;
+        drop(settings);
+
+        // Auto-start recording after login
+        if let Err(e) = handle.start_recording().await {
+            log::warn!("Failed to auto-start recording after login: {}", e);
+        }
 
         Ok(AuthResult {
             email: creds.email,
@@ -128,6 +134,12 @@ mod commands {
         settings.server_url = base_url;
         settings.save()?;
         handle.update_settings(settings.clone()).await;
+        drop(settings);
+
+        // Auto-start recording after signup
+        if let Err(e) = handle.start_recording().await {
+            log::warn!("Failed to auto-start recording after signup: {}", e);
+        }
 
         Ok(AuthResult {
             email: creds.email,
@@ -141,10 +153,11 @@ mod commands {
         handle: State<'_, Arc<AgentHandle>>,
     ) -> Result<(), String> {
         handle.stop().await;
+        // Don't stop recording — keep capturing with logged_out marker
 
         let mut settings = settings_state.lock().await;
         settings.auth_token = String::new();
-        settings.user_email = String::new();
+        // Keep user_email so recording knows who was last logged in
         settings.save()?;
         handle.update_settings(settings.clone()).await;
 
@@ -291,6 +304,7 @@ pub fn run() {
     let agent = Arc::new(AgentHandle::new());
 
     let agent_for_setup = agent.clone();
+    let settings_for_setup = settings.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -298,6 +312,23 @@ pub fn run() {
             // Start global event monitor on a background thread.
             // This is safe even if Accessibility permissions aren't granted yet.
             event_monitor::start_event_monitor(agent_for_setup.event_buffer());
+
+            // Auto-start recording if the user is already logged in
+            {
+                let agent = agent_for_setup.clone();
+                let settings = settings_for_setup.clone();
+                tauri::async_runtime::spawn(async move {
+                    let s = settings.lock().await;
+                    if s.is_logged_in() {
+                        log::info!("User is logged in — auto-starting recording");
+                        agent.update_settings(s.clone()).await;
+                        drop(s);
+                        if let Err(e) = agent.start_recording().await {
+                            log::error!("Failed to auto-start recording: {}", e);
+                        }
+                    }
+                });
+            }
 
             // Build tray menu
             let quit = MenuItemBuilder::with_id("quit", "Quit rho-bot").build(app)?;

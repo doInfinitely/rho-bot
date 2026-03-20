@@ -108,6 +108,7 @@ export interface Subscription {
   current_period_end: number;
   tasks_used: number;
   tasks_limit: number;
+  amount: number; // monthly amount in cents
 }
 
 export async function getSubscription(): Promise<Subscription> {
@@ -115,11 +116,11 @@ export async function getSubscription(): Promise<Subscription> {
 }
 
 export async function createCheckoutSession(
-  planId: string
+  amount: number
 ): Promise<{ url: string }> {
   return request<{ url: string }>("/api/billing/checkout", {
     method: "POST",
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ amount }),
   });
 }
 

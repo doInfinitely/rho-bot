@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     model_device: str = ""  # "" = auto-detect (CUDA > MPS > CPU), or e.g. "cpu", "cuda:0"
     model_encryption_key: str = ""  # hex-encoded 32-byte AES-256 key; empty = unencrypted (dev)
 
+    # S3 / Cloudflare R2 (screenshot storage)
+    s3_bucket: str = ""
+    s3_endpoint_url: str = ""  # R2 endpoint
+    s3_region: str = "auto"
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""

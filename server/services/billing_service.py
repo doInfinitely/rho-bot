@@ -1,6 +1,6 @@
 """
 Stripe billing service for rho-bot.
-Handles checkout sessions, webhooks, and subscription management.
+Pay-what-you-want model with dynamic pricing.
 """
 
 from __future__ import annotations
@@ -15,21 +15,6 @@ from server.config import settings
 from server.models.database import Subscription
 
 logger = logging.getLogger(__name__)
-
-# ---- Plan config ----
-
-PLAN_CONFIG = {
-    "pro": {
-        "name": "Pro",
-        "price_id": settings.stripe_pro_price_id,
-        "tasks_limit": 500,
-    },
-    "team": {
-        "name": "Team",
-        "price_id": settings.stripe_team_price_id,
-        "tasks_limit": 2000,
-    },
-}
 
 
 def _init_stripe():
@@ -62,6 +47,7 @@ async def get_or_create_customer(
         plan_id="free",
         status="active",
         tasks_limit=FREE_TASKS_LIMIT,
+        amount=0,
     )
     db.add(sub)
     await db.commit()
@@ -70,25 +56,29 @@ async def get_or_create_customer(
 
 
 async def create_checkout_session(
-    db: AsyncSession, user_id: str, email: str, plan_id: str
+    db: AsyncSession, user_id: str, email: str, amount_dollars: int
 ) -> str:
-    """Create a Stripe Checkout session and return its URL."""
+    """Create a Stripe Checkout session with a pay-what-you-want amount."""
     _init_stripe()
 
-    plan = PLAN_CONFIG.get(plan_id)
-    if plan is None:
-        raise ValueError(f"Unknown plan: {plan_id}")
-
     sub, _ = await get_or_create_customer(db, user_id, email)
+    amount_cents = amount_dollars * 100
+
+    # Create a dynamic price for this amount
+    price = stripe.Price.create(
+        unit_amount=amount_cents,
+        currency="usd",
+        recurring={"interval": "month"},
+        product_data={"name": f"rho-bot — ${amount_dollars}/mo"},
+    )
 
     session = stripe.checkout.Session.create(
         customer=sub.stripe_customer_id,
         mode="subscription",
-        line_items=[{"price": plan["price_id"], "quantity": 1}],
-        subscription_data={"trial_period_days": 14},
+        line_items=[{"price": price.id, "quantity": 1}],
         success_url=f"{settings.frontend_url}/dashboard/billing?success=1",
         cancel_url=f"{settings.frontend_url}/dashboard/billing?canceled=1",
-        metadata={"user_id": user_id, "plan_id": plan_id},
+        metadata={"user_id": user_id, "amount": str(amount_cents)},
     )
 
     return session.url
@@ -125,10 +115,9 @@ async def get_subscription(db: AsyncSession, user_id: str) -> Subscription | Non
 
 # ---- Quota enforcement ----
 
-# Subscription statuses that permit usage
 _ACTIVE_STATUSES = {"active", "trialing"}
 
-FREE_TASKS_LIMIT = 999_999_999  # uncapped for now
+FREE_TASKS_LIMIT = 999_999_999  # uncapped
 
 
 async def get_or_create_subscription(db: AsyncSession, user_id: str) -> Subscription:
@@ -140,13 +129,12 @@ async def get_or_create_subscription(db: AsyncSession, user_id: str) -> Subscrip
     if sub is not None:
         return sub
 
-    # First time this user touches billing — bootstrap a free-tier row.
-    # No Stripe customer is created yet; that happens when they upgrade.
     sub = Subscription(
         user_id=user_id,
         plan_id="free",
         status="active",
         tasks_limit=FREE_TASKS_LIMIT,
+        amount=0,
     )
     db.add(sub)
     await db.commit()
@@ -157,32 +145,16 @@ async def get_or_create_subscription(db: AsyncSession, user_id: str) -> Subscrip
 async def check_and_increment_quota(
     db: AsyncSession, user_id: str
 ) -> tuple[bool, str]:
-    """Check whether the user may consume a task, and if so, increment usage.
-
-    Returns
-    -------
-    (allowed, reason)
-        *allowed* is ``True`` when the action should proceed.
-        When ``False``, *reason* contains a human-readable explanation.
-    """
+    """Check whether the user may consume a task, and if so, increment usage."""
     sub = await get_or_create_subscription(db, user_id)
 
-    # 1. Subscription must be in good standing
     if sub.status not in _ACTIVE_STATUSES:
         return False, (
             f"Your subscription is {sub.status}. "
             "Please update your payment method at https://rho.bot/dashboard/billing"
         )
 
-    # 2. Must be under the task quota (free plan is uncapped for now)
-    if sub.plan_id != "free" and sub.tasks_used >= sub.tasks_limit:
-        return False, (
-            f"You've used all {sub.tasks_limit} tasks included in your "
-            f"{sub.plan_id.title()} plan this period. "
-            "Upgrade your plan or wait for the next billing cycle."
-        )
-
-    # All good — bump usage
+    # All good — bump usage (no hard quota for pay-what-you-want)
     sub.tasks_used = (sub.tasks_used or 0) + 1
     await db.commit()
     return True, ""
@@ -235,29 +207,20 @@ async def _upsert_subscription(db: AsyncSession, stripe_sub: dict) -> None:
         logger.warning(f"No local subscription for customer {customer_id}")
         return
 
-    # Determine plan from the price ID
-    price_id = stripe_sub["items"]["data"][0]["price"]["id"]
-    plan_id = "free"
-    plan_name = "Free"
-    tasks_limit = 50
-
-    for pid, config in PLAN_CONFIG.items():
-        if config["price_id"] == price_id:
-            plan_id = pid
-            plan_name = config["name"]
-            tasks_limit = config["tasks_limit"]
-            break
+    # Extract amount from the subscription's price
+    amount_cents = stripe_sub["items"]["data"][0]["price"]["unit_amount"] or 0
 
     sub.stripe_subscription_id = stripe_sub["id"]
-    sub.plan_id = plan_id
+    sub.plan_id = "supporter" if amount_cents > 0 else "free"
     sub.status = stripe_sub["status"]
     sub.current_period_end = stripe_sub["current_period_end"]
-    sub.tasks_limit = tasks_limit
+    sub.tasks_limit = FREE_TASKS_LIMIT
+    sub.amount = amount_cents
 
     await db.commit()
     logger.info(
         f"Updated subscription for customer {customer_id}: "
-        f"plan={plan_id}, status={stripe_sub['status']}"
+        f"amount=${amount_cents / 100:.2f}, status={stripe_sub['status']}"
     )
 
 
@@ -277,8 +240,9 @@ async def _cancel_subscription(db: AsyncSession, stripe_sub: dict) -> None:
     sub.plan_id = "free"
     sub.status = "canceled"
     sub.stripe_subscription_id = None
-    sub.tasks_limit = 50
+    sub.tasks_limit = FREE_TASKS_LIMIT
     sub.tasks_used = 0
+    sub.amount = 0
 
     await db.commit()
     logger.info(f"Canceled subscription for customer {customer_id}")

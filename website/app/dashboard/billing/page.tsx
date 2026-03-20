@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Check, CreditCard, AlertCircle, ArrowRight } from "lucide-react";
+import { CreditCard, ArrowRight, Heart } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { PRICING_TIERS } from "@/lib/pricing";
 import {
   getSubscription,
   createCheckoutSession,
@@ -14,11 +13,11 @@ import type { Subscription } from "@/lib/api";
 
 export default function BillingPage() {
   const searchParams = useSearchParams();
-  const suggestedPlan = searchParams.get("plan");
 
   const [sub, setSub] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
-  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [amount, setAmount] = useState(5);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -34,15 +33,16 @@ export default function BillingPage() {
     load();
   }, []);
 
-  async function handleCheckout(planId: string) {
-    setCheckoutLoading(planId);
+  async function handleCheckout() {
+    if (amount <= 0) return;
+    setCheckoutLoading(true);
     try {
-      const { url } = await createCheckoutSession(planId);
+      const { url } = await createCheckoutSession(amount);
       window.location.href = url;
     } catch (err: any) {
       alert(err.message || "Failed to create checkout session");
     } finally {
-      setCheckoutLoading(null);
+      setCheckoutLoading(false);
     }
   }
 
@@ -63,20 +63,18 @@ export default function BillingPage() {
     );
   }
 
-  const paidTiers = PRICING_TIERS.filter(
-    (t) => t.id !== "free" && t.id !== "api"
-  );
+  const isSupporter = sub && sub.amount > 0 && sub.status === "active";
 
   return (
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight">Billing</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Manage your subscription and payment method
+          Pay what you want — every bit helps us keep building
         </p>
       </div>
 
-      {/* Current plan */}
+      {/* Current status */}
       <div className="p-6 rounded-xl border border-neutral-800 bg-neutral-900/50 mb-8">
         <div className="flex items-start justify-between">
           <div>
@@ -84,20 +82,20 @@ export default function BillingPage() {
               Current Plan
             </h2>
             <p className="text-xl font-bold">
-              {sub ? sub.plan_name : "Free"}
+              {isSupporter
+                ? `Supporter — $${(sub.amount / 100).toFixed(0)}/mo`
+                : "Free"}
             </p>
-            {sub && (
+            {sub && sub.current_period_end && isSupporter && (
               <p className="text-sm text-neutral-500 mt-1">
                 {sub.status === "active"
                   ? `Renews ${new Date(sub.current_period_end * 1000).toLocaleDateString()}`
-                  : sub.status === "trialing"
-                    ? `Trial ends ${new Date(sub.current_period_end * 1000).toLocaleDateString()}`
-                    : `Status: ${sub.status}`}
+                  : `Status: ${sub.status}`}
               </p>
             )}
           </div>
 
-          {sub && (
+          {isSupporter && (
             <button
               onClick={handleManageBilling}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg border border-neutral-700 hover:border-neutral-600 text-neutral-300 hover:text-neutral-100 transition-colors"
@@ -107,114 +105,71 @@ export default function BillingPage() {
             </button>
           )}
         </div>
-
-        {/* Usage bar */}
-        <div className="mt-6 pt-6 border-t border-neutral-800">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-neutral-400">Tasks this month</span>
-            <span className="text-sm text-neutral-300">
-              {sub?.tasks_used ?? 0} / {sub?.tasks_limit ?? 50}
-            </span>
-          </div>
-          <div className="w-full h-2 rounded-full bg-neutral-800">
-            <div
-              className={cn(
-                "h-2 rounded-full transition-all",
-                (sub?.tasks_used ?? 0) / (sub?.tasks_limit ?? 50) > 0.8
-                  ? "bg-red-500"
-                  : "bg-rho-500"
-              )}
-              style={{
-                width: `${Math.min(
-                  ((sub?.tasks_used ?? 0) / (sub?.tasks_limit ?? 50)) * 100,
-                  100
-                )}%`,
-              }}
-            />
-          </div>
-        </div>
       </div>
 
-      {/* Suggested plan banner */}
-      {suggestedPlan && !sub && (
-        <div className="p-4 rounded-xl border border-rho-500/30 bg-rho-950/20 mb-8 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-rho-400 shrink-0" />
-          <p className="text-sm text-neutral-300">
-            You selected the{" "}
-            <strong className="text-rho-300">
-              {suggestedPlan.charAt(0).toUpperCase() + suggestedPlan.slice(1)}
-            </strong>{" "}
-            plan. Click below to start your 14-day free trial.
+      {/* Pay what you want */}
+      {!isSupporter && (
+        <div className="p-8 rounded-xl border border-neutral-800 bg-neutral-900/50">
+          <div className="flex items-center gap-2 mb-4">
+            <Heart className="w-5 h-5 text-rho-400" />
+            <h2 className="text-lg font-semibold">Support rho-bot</h2>
+          </div>
+          <p className="text-sm text-neutral-400 mb-6">
+            rho-bot is free to use. If you find it valuable, a monthly
+            contribution helps us keep improving it.
           </p>
-        </div>
-      )}
 
-      {/* Upgrade options */}
-      {!sub && (
-        <div>
-          <h2 className="text-lg font-semibold mb-4">Upgrade Your Plan</h2>
-          <div className="grid md:grid-cols-2 gap-4">
-            {paidTiers.map((tier) => (
-              <div
-                key={tier.id}
-                className={cn(
-                  "p-6 rounded-xl border transition-colors",
-                  suggestedPlan === tier.id
-                    ? "border-rho-500/50 bg-rho-950/20"
-                    : "border-neutral-800 bg-neutral-900/50 hover:border-neutral-700"
-                )}
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h3 className="font-semibold">{tier.name}</h3>
-                    <p className="text-sm text-neutral-500">
-                      {tier.description}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-2xl font-bold">
-                      ${tier.monthlyPrice}
-                    </span>
-                    <span className="text-sm text-neutral-500"> / mo</span>
-                  </div>
-                </div>
+          <div className="flex items-center gap-4 mb-6">
+            <div className="flex items-baseline gap-1">
+              <span className="text-lg text-neutral-400">$</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={amount}
+                onChange={(e) => setAmount(Math.max(1, Number(e.target.value)))}
+                className="w-20 text-3xl font-bold text-neutral-100 bg-transparent border-b-2 border-neutral-700 focus:border-rho-500 outline-none text-center appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <span className="text-sm text-neutral-500">/ month</span>
+            </div>
 
-                <ul className="space-y-2 mb-6">
-                  {tier.features.slice(0, 4).map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-neutral-400">
-                      <Check className="w-3.5 h-3.5 text-rho-400 shrink-0" />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-
+            <div className="flex gap-2">
+              {[5, 10, 25].map((v) => (
                 <button
-                  onClick={() => handleCheckout(tier.id)}
-                  disabled={checkoutLoading === tier.id}
+                  key={v}
+                  onClick={() => setAmount(v)}
                   className={cn(
-                    "w-full flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-colors",
-                    suggestedPlan === tier.id
-                      ? "bg-rho-600 hover:bg-rho-700 text-white"
-                      : "bg-neutral-800 hover:bg-neutral-700 text-neutral-200"
+                    "px-3 py-1.5 text-sm rounded-lg transition-colors",
+                    amount === v
+                      ? "bg-rho-600 text-white"
+                      : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
                   )}
                 >
-                  {checkoutLoading === tier.id ? (
-                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      Start Free Trial
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </>
-                  )}
+                  ${v}
                 </button>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
+
+          <button
+            onClick={handleCheckout}
+            disabled={checkoutLoading || amount <= 0}
+            className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-lg bg-rho-600 hover:bg-rho-700 text-white transition-colors disabled:opacity-50"
+          >
+            {checkoutLoading ? (
+              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <>
+                Support with ${amount}/mo
+                <ArrowRight className="w-3.5 h-3.5" />
+              </>
+            )}
+          </button>
         </div>
       )}
 
       {/* Manage existing subscription */}
-      {sub && (
+      {isSupporter && (
         <div>
           <h2 className="text-lg font-semibold mb-4">Payment History</h2>
           <div className="p-8 rounded-xl border border-neutral-800 bg-neutral-900/50 text-center">

@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import {
   Zap,
@@ -16,10 +15,8 @@ import {
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import PricingCard from "@/components/PricingCard";
-import { PRICING_TIERS } from "@/lib/pricing";
 
 export default function HomePage() {
-  const [annual, setAnnual] = useState(false);
 
   return (
     <>
@@ -201,53 +198,24 @@ export default function HomePage() {
 
       {/* ── Pricing preview ── */}
       <section className="py-24 px-6">
-        <div className="mx-auto max-w-6xl">
+        <div className="mx-auto max-w-lg">
           <div className="text-center mb-12">
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
-              Simple, Transparent Pricing
+              Pay What You Want
             </h2>
             <p className="mt-4 text-neutral-400 max-w-2xl mx-auto">
-              Start free, scale as you go. No hidden fees, no per-token surprises.
+              Full access to everything. No hidden fees, no per-token surprises.
             </p>
-
-            {/* Billing toggle */}
-            <div className="mt-8 inline-flex items-center gap-3 p-1 rounded-full bg-neutral-900 border border-neutral-800">
-              <button
-                onClick={() => setAnnual(false)}
-                className={`px-4 py-1.5 text-sm rounded-full transition-colors ${
-                  !annual
-                    ? "bg-neutral-800 text-neutral-100"
-                    : "text-neutral-500 hover:text-neutral-300"
-                }`}
-              >
-                Monthly
-              </button>
-              <button
-                onClick={() => setAnnual(true)}
-                className={`px-4 py-1.5 text-sm rounded-full transition-colors ${
-                  annual
-                    ? "bg-neutral-800 text-neutral-100"
-                    : "text-neutral-500 hover:text-neutral-300"
-                }`}
-              >
-                Annual
-                <span className="ml-1.5 text-xs text-rho-400">save 20%</span>
-              </button>
-            </div>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {PRICING_TIERS.map((tier) => (
-              <PricingCard key={tier.id} tier={tier} annual={annual} />
-            ))}
-          </div>
+          <PricingCard />
 
           <div className="mt-10 text-center">
             <Link
               href="/pricing"
               className="text-sm text-rho-400 hover:text-rho-300 transition-colors inline-flex items-center gap-1"
             >
-              Compare all features in detail
+              Learn more about pricing
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
