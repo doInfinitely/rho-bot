@@ -257,17 +257,6 @@ mod commands {
     }
 
     #[tauri::command]
-    pub async fn start_recording(handle: State<'_, Arc<AgentHandle>>) -> Result<(), String> {
-        handle.start_recording().await.map_err(|e| e.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn stop_recording(handle: State<'_, Arc<AgentHandle>>) -> Result<(), String> {
-        handle.stop_recording().await;
-        Ok(())
-    }
-
-    #[tauri::command]
     pub async fn get_recent_actions(
         handle: State<'_, Arc<AgentHandle>>,
     ) -> Result<Vec<Value>, String> {
@@ -313,19 +302,17 @@ pub fn run() {
             // This is safe even if Accessibility permissions aren't granted yet.
             event_monitor::start_event_monitor(agent_for_setup.event_buffer());
 
-            // Auto-start recording if the user is already logged in
+            // Always start recording on launch
             {
                 let agent = agent_for_setup.clone();
                 let settings = settings_for_setup.clone();
                 tauri::async_runtime::spawn(async move {
                     let s = settings.lock().await;
-                    if s.is_logged_in() {
-                        log::info!("User is logged in — auto-starting recording");
-                        agent.update_settings(s.clone()).await;
-                        drop(s);
-                        if let Err(e) = agent.start_recording().await {
-                            log::error!("Failed to auto-start recording: {}", e);
-                        }
+                    log::info!("Auto-starting recording on launch");
+                    agent.update_settings(s.clone()).await;
+                    drop(s);
+                    if let Err(e) = agent.start_recording().await {
+                        log::error!("Failed to auto-start recording: {}", e);
                     }
                 });
             }
@@ -418,8 +405,6 @@ pub fn run() {
             commands::get_agent_state,
             commands::start_agent,
             commands::stop_agent,
-            commands::start_recording,
-            commands::stop_recording,
             commands::get_recent_actions,
             commands::get_settings,
             commands::save_settings,

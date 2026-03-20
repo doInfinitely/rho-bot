@@ -64,25 +64,8 @@ export default function StatusPanel({ state, error }: Props) {
     }
   };
 
-  const handleRecord = async () => {
-    try {
-      await invoke("start_recording");
-    } catch (e) {
-      console.error("Failed to start recording:", e);
-    }
-  };
-
-  const handleStopRecording = async () => {
-    try {
-      await invoke("stop_recording");
-    } catch (e) {
-      console.error("Failed to stop recording:", e);
-    }
-  };
-
-  const busy =
+  const agentBusy =
     state === "running" ||
-    state === "recording" ||
     state === "connecting" ||
     state === "reconnecting";
   const missingPerms =
@@ -130,6 +113,15 @@ export default function StatusPanel({ state, error }: Props) {
         <span className="text-sm font-medium">{stateLabels[state]}</span>
       </div>
 
+      {/* Recording indicator */}
+      {(state === "recording" || state === "disconnected") && (
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-300/80">
+          {state === "recording"
+            ? "Recording your actions in the background."
+            : "Recording will start automatically when connected."}
+        </div>
+      )}
+
       {/* Error banner */}
       {error && state !== "running" && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm space-y-1">
@@ -140,28 +132,21 @@ export default function StatusPanel({ state, error }: Props) {
         </div>
       )}
 
-      {/* Controls */}
+      {/* Controls — agent only */}
       <div className="flex gap-2">
         <button
           onClick={handleStart}
-          disabled={busy}
+          disabled={agentBusy}
           className="px-4 py-2 text-sm font-medium rounded-lg bg-rho-600 hover:bg-rho-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Start Agent
         </button>
         <button
-          onClick={handleRecord}
-          disabled={busy}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          Record
-        </button>
-        <button
-          onClick={state === "recording" ? handleStopRecording : handleStop}
-          disabled={state === "disconnected"}
+          onClick={handleStop}
+          disabled={state !== "running" && state !== "connecting" && state !== "reconnecting"}
           className="px-4 py-2 text-sm font-medium rounded-lg bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          Stop
+          Stop Agent
         </button>
       </div>
 
@@ -179,8 +164,8 @@ export default function StatusPanel({ state, error }: Props) {
       {/* Info */}
       <div className="text-xs text-neutral-500 space-y-1">
         <p>
-          The agent captures your screen and accessibility tree, sends context
-          to the rho-bot server, and executes predicted actions.
+          rho-bot continuously records your screen and actions in the background.
+          Start the agent to have it execute tasks for you.
         </p>
         <p>
           Requires Accessibility and Screen Recording permissions in System

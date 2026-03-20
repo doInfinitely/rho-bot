@@ -350,6 +350,8 @@ async fn run_agent_loop(
 
 /// Passive recording loop: captures context, observes user actions, and
 /// sends context/action pairs to the server for training data collection.
+/// Runs forever, retrying connections with backoff. Re-reads settings each
+/// attempt so it picks up credentials after login.
 async fn run_recording_loop(
     state: Arc<Mutex<String>>,
     settings: Arc<Mutex<AppSettings>>,
@@ -358,70 +360,100 @@ async fn run_recording_loop(
 ) -> Result<(), String> {
     let session_id = Uuid::new_v4().to_string();
 
-    let (ws_url, token, interval) = {
-        let s = settings.lock().await;
-        (s.ws_record_url(), s.auth_token.clone(), s.capture_interval_ms)
-    };
-
-    // Connect
-    *state.lock().await = "connected".into();
-    let mut client = WsClient::connect(&ws_url, &token).await?;
-    *state.lock().await = "recording".into();
-
     loop {
         if should_stop(&stop_signal).await {
-            break;
+            return Ok(());
         }
 
-        // 1. Capture the current screen state
-        let screenshot = match capture::capture_screen() {
-            Ok(s) => s,
+        // Re-read settings each connection attempt (picks up token after login)
+        let (ws_url, token, interval) = {
+            let s = settings.lock().await;
+            (s.ws_record_url(), s.auth_token.clone(), s.capture_interval_ms)
+        };
+
+        // Try to connect
+        *state.lock().await = "connecting".into();
+        let client = WsClient::connect(&ws_url, &token).await;
+
+        let mut client = match client {
+            Ok(c) => {
+                log::info!("Recording WebSocket connected");
+                c
+            }
             Err(e) => {
-                log::warn!("Screenshot failed: {}", e);
-                String::new()
+                log::warn!("Recording connect failed (will retry): {}", e);
+                *state.lock().await = "disconnected".into();
+                // Wait before retrying — check for stop signal during wait
+                for _ in 0..10 {
+                    if should_stop(&stop_signal).await {
+                        return Ok(());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                continue;
             }
         };
 
-        let tree = accessibility::read_frontmost_tree();
-        let (app_name, _pid) = platform::frontmost_app();
-        let (wx, wy, ww, wh) = platform::focused_window_bounds();
+        *state.lock().await = "recording".into();
 
-        // Read current auth state each iteration
-        let (user_email, logged_in) = {
-            let s = settings.lock().await;
-            (s.user_email.clone(), s.is_logged_in())
-        };
+        // Inner capture loop — runs until connection breaks
+        loop {
+            if should_stop(&stop_signal).await {
+                client.close().await;
+                return Ok(());
+            }
 
-        let context = json!({
-            "session_id": session_id,
-            "timestamp": now(),
-            "screenshot_b64": screenshot,
-            "accessibility_tree": tree,
-            "recent_events": [],
-            "active_app": app_name,
-            "window_bounds": {"x": wx, "y": wy, "width": ww, "height": wh}
-        });
+            // 1. Capture the current screen state
+            let screenshot = match capture::capture_screen() {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("Screenshot failed: {}", e);
+                    String::new()
+                }
+            };
 
-        // 2. Wait for the user to act
-        tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+            let tree = accessibility::read_frontmost_tree();
+            let (app_name, _pid) = platform::frontmost_app();
+            let (wx, wy, ww, wh) = platform::focused_window_bounds();
 
-        // 3. Snapshot input events (don't drain — agent loop may need them too)
-        let user_actions = event_buffer.snapshot().await;
+            // Read current auth state each iteration
+            let (user_email, logged_in) = {
+                let s = settings.lock().await;
+                (s.user_email.clone(), s.is_logged_in())
+            };
 
-        // 4. Send the context/action pair to the server
-        let payload = json!({
-            "context": context,
-            "user_actions": user_actions,
-            "user_email": user_email,
-            "logged_in": logged_in,
-        });
+            let context = json!({
+                "session_id": session_id,
+                "timestamp": now(),
+                "screenshot_b64": screenshot,
+                "accessibility_tree": tree,
+                "recent_events": [],
+                "active_app": app_name,
+                "window_bounds": {"x": wx, "y": wy, "width": ww, "height": wh}
+            });
 
-        if let Err(e) = client.send_training_pair(&payload).await {
-            log::error!("Failed to send training pair: {}", e);
-            break;
+            // 2. Wait for the user to act
+            tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+
+            // 3. Snapshot input events
+            let user_actions = event_buffer.snapshot().await;
+
+            // 4. Send the context/action pair to the server
+            let payload = json!({
+                "context": context,
+                "user_actions": user_actions,
+                "user_email": user_email,
+                "logged_in": logged_in,
+            });
+
+            if let Err(e) = client.send_training_pair(&payload).await {
+                log::error!("Recording send failed (will reconnect): {}", e);
+                break; // break inner loop to reconnect
+            }
         }
-    }
 
-    client.close().await;
-    Ok(())
+        *state.lock().await = "disconnected".into();
+        // Brief pause before reconnecting
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
 }
