@@ -31,6 +31,15 @@ struct ChatView: View {
                     }
                 }
 
+                // Record button centered above input
+                FluidRecordButton(
+                    isRecording: vm.isRecordingAudio,
+                    onTap: { vm.toggleRecording() },
+                    size: 72
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
+
                 Divider()
 
                 // Input bar
@@ -44,13 +53,6 @@ struct ChatView: View {
                     .padding(.vertical, 10)
                     .background(.ultraThinMaterial)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
-
-                    // Record button with fluid effect
-                    FluidRecordButton(
-                        isRecording: vm.isRecordingAudio,
-                        onTap: { vm.toggleRecording() },
-                        size: 36
-                    )
 
                     if vm.isRunning {
                         Button { vm.stop() } label: {

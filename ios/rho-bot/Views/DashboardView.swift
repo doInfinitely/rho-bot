@@ -4,23 +4,35 @@ import UIKit
 
 struct DashboardView: View {
     @EnvironmentObject var agentVM: AgentViewModel
-    @StateObject private var tts = ElevenLabsService.shared
-    @State private var quickTask = ""
     @State private var isRecording = false
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    statusCard
-                    goalSection
-                    quickTaskSection
-                    statsSection
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(spacing: 24) {
+                        statusCard
+                        goalSection
+                        statsSection
+                    }
+                    .padding()
                 }
-                .padding()
-            }
-            .onTapGesture {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                .onTapGesture {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+
+                // Record button centered above tab bar (matches ChatView position)
+                FluidRecordButton(
+                    isRecording: isRecording,
+                    onTap: { toggleRecording() },
+                    size: 72
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
+
+                // Spacer to match ChatView's input bar height
+                Spacer()
+                    .frame(height: 58)
             }
             .navigationTitle("Dashboard")
             .refreshable {
@@ -89,44 +101,6 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Quick Task with Record
-
-    private var quickTaskSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Quick Task")
-                .font(.headline)
-
-            HStack(spacing: 8) {
-                TextField("Tell Rho what to do...", text: $quickTask)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-
-                FluidRecordButton(
-                    isRecording: isRecording,
-                    onTap: { toggleRecording() },
-                    size: 36
-                )
-
-                Button {
-                    guard !quickTask.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    WebSocketClient.shared.runTask(quickTask)
-                    quickTask = ""
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(quickTask.trimmingCharacters(in: .whitespaces).isEmpty ? .gray : .blue)
-                        .clipShape(Circle())
-                }
-                .disabled(quickTask.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-    }
-
     // MARK: - Stats Section
 
     private var statsSection: some View {
@@ -150,15 +124,16 @@ struct DashboardView: View {
         if isRecording {
             isRecording = false
             Task {
-                if let text = await tts.stopRecordingAndTranscribe() {
-                    quickTask = text
+                if let text = await ElevenLabsService.shared.stopRecordingAndTranscribe() {
+                    agentVM.goalText = text
+                    agentVM.isEditingGoal = true
                 }
             }
         } else {
             AVAudioApplication.requestRecordPermission { granted in
                 Task { @MainActor in
                     guard granted else { return }
-                    tts.startRecording()
+                    ElevenLabsService.shared.startRecording()
                     isRecording = true
                 }
             }
