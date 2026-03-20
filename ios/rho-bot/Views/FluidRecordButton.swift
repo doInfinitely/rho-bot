@@ -36,7 +36,7 @@ struct FluidRecordButton: View {
 
                 // Mic icon
                 Circle()
-                    .fill(isRecording ? Color.blue.opacity(0.85) : Color(.systemGray6))
+                    .fill(isRecording ? Color.blue.opacity(0.85) : Color.clear)
                     .frame(width: size, height: size)
                     .overlay(
                         Image(systemName: isRecording ? "mic.fill" : "mic")

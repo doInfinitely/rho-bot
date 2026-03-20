@@ -68,7 +68,7 @@ struct DashboardView: View {
                 Toggle("", isOn: Binding(
                     get: { agentVM.status.is_online },
                     set: { _ in
-                        Task { await agentVM.toggleAgent() }
+                        agentVM.toggleAgent()
                     }
                 ))
                 .labelsHidden()

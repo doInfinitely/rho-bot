@@ -31,15 +31,17 @@ struct ChatView: View {
                     }
                 }
 
-                // Record button centered above input
-                FluidRecordButton(
-                    isRecording: vm.isRecordingAudio,
-                    onTap: { vm.toggleRecording() },
-                    size: 72,
-                    waveform: vm.waveform
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.top, 4)
+                // Record button centered above input (hidden when task running)
+                if !vm.isRunning {
+                    FluidRecordButton(
+                        isRecording: vm.isRecordingAudio,
+                        onTap: { vm.toggleRecording() },
+                        size: 72,
+                        waveform: vm.waveform
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
+                }
 
                 Divider()
 
@@ -97,9 +99,6 @@ struct ChatView: View {
                     }
                     .disabled(vm.messages.isEmpty)
                 }
-            }
-            .onDisappear {
-                vm.disconnect()
             }
         }
     }

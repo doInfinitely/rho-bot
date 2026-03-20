@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AVFoundation
+import Combine
 
 struct ChatMessage: Identifiable {
     let id = UUID()
@@ -33,6 +34,8 @@ class ChatViewModel: ObservableObject {
     private let tts = ElevenLabsService.shared
 
     init() {
+        // Reactive connection status from WebSocket
+        ws.$isConnected.assign(to: &$isConnected)
         // Forward audio levels from ElevenLabsService
         tts.$waveform.assign(to: &$waveform)
         ws.onStep = { [weak self] step in
@@ -82,12 +85,10 @@ class ChatViewModel: ObservableObject {
 
     func connect() {
         ws.ensureConnected()
-        isConnected = ws.isConnected
     }
 
     func disconnect() {
         ws.disconnect()
-        isConnected = false
     }
 
     func send() {
@@ -103,7 +104,6 @@ class ChatViewModel: ObservableObject {
         } else if !isRunning {
             ws.runTask(text)
             isRunning = true
-            isConnected = true
         } else {
             ws.sendChat(text)
         }

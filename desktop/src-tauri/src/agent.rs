@@ -91,7 +91,28 @@ impl AgentHandle {
             (s.use_marionette, self.task.lock().await.clone())
         };
 
-        if use_marionette {
+        if use_marionette && task.is_empty() {
+            // Standby mode: connect and wait for tasks from iOS
+            tokio::spawn(async move {
+                let result = run_marionette_standby_loop(
+                    state.clone(),
+                    last_error.clone(),
+                    settings,
+                    event_buffer,
+                    recent_actions,
+                    stop_signal,
+                )
+                .await;
+
+                if let Err(e) = result {
+                    log::error!("Marionette standby error: {}", e);
+                    *last_error.lock().await = e;
+                }
+
+                *state.lock().await = "disconnected".into();
+                *running.lock().await = false;
+            });
+        } else if use_marionette {
             tokio::spawn(async move {
                 let result = run_marionette_loop(
                     state.clone(),
@@ -633,6 +654,263 @@ async fn run_marionette_loop(
             interval
         };
         tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+    }
+
+    client.close().await;
+    Ok(())
+}
+
+/// Marionette standby loop: connects to the server in standby mode and waits
+/// for tasks forwarded from the iOS app. When a task arrives, enters the
+/// capture/execute loop. On task completion, returns to standby.
+async fn run_marionette_standby_loop(
+    state: Arc<Mutex<String>>,
+    last_error: Arc<Mutex<String>>,
+    settings: Arc<Mutex<AppSettings>>,
+    event_buffer: Arc<EventBuffer>,
+    recent_actions: Arc<Mutex<Vec<Value>>>,
+    stop_signal: Arc<Notify>,
+) -> Result<(), String> {
+    let (ws_url, interval) = {
+        let s = settings.lock().await;
+        (s.ws_marionette_url(), s.capture_interval_ms)
+    };
+
+    log::info!("Marionette standby: connecting to {}", ws_url);
+
+    // Connect with retries
+    let mut client: Option<WsClient> = None;
+    let mut attempts: u32 = 0;
+
+    while attempts < MAX_RECONNECT_ATTEMPTS {
+        if should_stop(&stop_signal).await {
+            return Ok(());
+        }
+
+        *state.lock().await = format!("connecting (attempt {})", attempts + 1);
+
+        match WsClient::connect_no_auth(&ws_url).await {
+            Ok(c) => {
+                log::info!("Marionette standby connected on attempt {}", attempts + 1);
+                client = Some(c);
+                break;
+            }
+            Err(e) => {
+                attempts += 1;
+                let msg = format!("Standby connect failed (attempt {}): {}", attempts, e);
+                log::warn!("{}", msg);
+                *last_error.lock().await = msg;
+
+                if attempts < MAX_RECONNECT_ATTEMPTS {
+                    let backoff = std::time::Duration::from_secs(2u64.pow(attempts.min(4)));
+                    tokio::time::sleep(backoff).await;
+                }
+            }
+        }
+    }
+
+    let mut client = client.ok_or_else(|| {
+        format!("Failed to connect to marionette after {} attempts", MAX_RECONNECT_ATTEMPTS)
+    })?;
+
+    // Register as standby
+    if let Err(e) = client.send_register().await {
+        return Err(format!("Failed to register as standby: {}", e));
+    }
+
+    log::info!("Marionette standby: registered, waiting for tasks");
+    *state.lock().await = "standby".into();
+    *last_error.lock().await = String::new();
+
+    // Outer loop: wait for tasks
+    loop {
+        if should_stop(&stop_signal).await {
+            break;
+        }
+
+        // Wait for a run_task message from the server
+        let msg = tokio::select! {
+            _ = async {
+                // Check stop signal periodically
+                loop {
+                    if should_stop(&stop_signal).await {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            } => {
+                break;
+            }
+            msg = client.receive_message() => msg,
+        };
+
+        let msg = match msg {
+            Ok(m) => m,
+            Err(e) => {
+                log::error!("Standby receive failed: {}", e);
+                *last_error.lock().await = e;
+                break;
+            }
+        };
+
+        let msg_type = msg.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+        match msg_type {
+            "run_task" => {
+                let task = msg.get("task").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                if task.is_empty() {
+                    log::warn!("Received run_task with empty task");
+                    continue;
+                }
+
+                log::info!("Marionette standby: received task: {}", task);
+                *state.lock().await = "running".into();
+
+                let session_id = Uuid::new_v4().to_string();
+                let mut consecutive_errors: u32 = 0;
+
+                // Inner capture/execute loop for this task
+                loop {
+                    if should_stop(&stop_signal).await {
+                        break;
+                    }
+
+                    // 1. Capture screenshot
+                    let screenshot = match capture::capture_screen() {
+                        Ok(s) => { consecutive_errors = 0; s }
+                        Err(e) => {
+                            log::warn!("Screenshot failed: {}", e);
+                            consecutive_errors += 1;
+                            String::new()
+                        }
+                    };
+
+                    // 2. Read accessibility tree
+                    let tree = accessibility::read_frontmost_tree();
+
+                    // 3. Gather recent events
+                    let events = event_buffer.drain().await;
+
+                    // 4. Build context bundle
+                    let (app_name, _pid) = platform::frontmost_app();
+                    let (wx, wy, ww, wh) = platform::focused_window_bounds();
+
+                    let context = json!({
+                        "session_id": session_id,
+                        "timestamp": now(),
+                        "screenshot_b64": screenshot,
+                        "accessibility_tree": tree,
+                        "recent_events": events,
+                        "active_app": app_name,
+                        "window_bounds": {"x": wx, "y": wy, "width": ww, "height": wh}
+                    });
+
+                    // 5. Send context and receive response
+                    match client.send_marionette_context(&context).await {
+                        Ok(response) => {
+                            consecutive_errors = 0;
+                            let resp_type = response.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+                            match resp_type {
+                                "actions" => {
+                                    if let Some(actions_arr) = response.get("actions").and_then(|a| a.as_array()) {
+                                        let actions: Vec<Action> = actions_arr
+                                            .iter()
+                                            .filter_map(|a| serde_json::from_value::<Action>(a.clone()).ok())
+                                            .collect();
+
+                                        if !actions.is_empty() {
+                                            log::info!("Executing {} actions", actions.len());
+                                            if let Err(e) = executor::execute_batch(&actions) {
+                                                log::error!("Batch execution failed: {}", e);
+                                            }
+                                        }
+                                    }
+
+                                    let mut log_actions = recent_actions.lock().await;
+                                    log_actions.push(response);
+                                    let len = log_actions.len();
+                                    if len > 50 { log_actions.drain(..len - 50); }
+                                }
+
+                                "done" => {
+                                    let result = response.get("result")
+                                        .and_then(|r| r.as_str())
+                                        .unwrap_or("Task completed");
+                                    log::info!("Task done: {}", result);
+
+                                    let mut log_actions = recent_actions.lock().await;
+                                    log_actions.push(response);
+                                    break; // Exit inner loop, return to standby
+                                }
+
+                                "stop" => {
+                                    log::info!("Task stopped by server");
+                                    break;
+                                }
+
+                                "ask_user" => {
+                                    let message = response.get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("Agent is asking for input");
+                                    log::info!("Ask user: {}", message);
+                                    // Auto-respond for now
+                                    if let Err(e) = client.send_chat("yes, proceed").await {
+                                        log::error!("Failed to send chat response: {}", e);
+                                    }
+                                }
+
+                                "error" => {
+                                    let msg = response.get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("Unknown error");
+                                    log::error!("Server error: {}", msg);
+                                    *last_error.lock().await = msg.to_string();
+                                    consecutive_errors += 1;
+                                }
+
+                                _ => {
+                                    log::warn!("Unknown response type: {}", resp_type);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Context send failed: {}", e);
+                            *last_error.lock().await = e;
+                            consecutive_errors += 1;
+                            if consecutive_errors > 3 {
+                                break; // Give up on this task
+                            }
+                        }
+                    }
+
+                    // Sleep between iterations
+                    let sleep_ms = if consecutive_errors > 5 {
+                        interval.max(5000)
+                    } else {
+                        interval
+                    };
+                    tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+                }
+
+                // Task finished or failed — re-register as standby
+                log::info!("Task finished, re-registering as standby");
+                *state.lock().await = "standby".into();
+                if let Err(e) = client.send_register().await {
+                    log::error!("Failed to re-register: {}", e);
+                    break;
+                }
+            }
+
+            "stop" => {
+                log::info!("Stop received in standby mode");
+                break;
+            }
+
+            other => {
+                log::warn!("Unexpected message in standby: {}", other);
+            }
+        }
     }
 
     client.close().await;

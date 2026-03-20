@@ -206,6 +206,70 @@ impl WsClient {
             .map_err(|e| format!("Send chat failed: {}", e))
     }
 
+    /// Register as a standby desktop client (ready to receive tasks from iOS).
+    pub async fn send_register(&mut self) -> Result<(), String> {
+        let msg = serde_json::json!({"type": "register"});
+        self.write
+            .send(Message::Text(msg.to_string()))
+            .await
+            .map_err(|e| format!("Send register failed: {}", e))?;
+
+        // Wait for 'registered' acknowledgment
+        loop {
+            match self.read.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    let resp: Value = serde_json::from_str(&text)
+                        .map_err(|e| format!("Parse register response: {}", e))?;
+                    if resp.get("type").and_then(|t| t.as_str()) == Some("registered") {
+                        return Ok(());
+                    }
+                    if resp.get("type").and_then(|t| t.as_str()) == Some("error") {
+                        let msg = resp.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+                        return Err(format!("Server error: {}", msg));
+                    }
+                    continue;
+                }
+                Some(Ok(Message::Ping(data))) => {
+                    let _ = self.write.send(Message::Pong(data)).await;
+                    continue;
+                }
+                Some(Ok(Message::Pong(_))) => continue,
+                Some(Ok(Message::Close(_))) => return Err("Server closed connection".into()),
+                Some(Err(e)) => return Err(format!("Read error: {}", e)),
+                None => return Err("Connection closed before registered".into()),
+                _ => continue,
+            }
+        }
+    }
+
+    /// Receive a single JSON message from the server (for standby mode).
+    ///
+    /// Blocks until a text message arrives, handling Ping/Pong automatically.
+    pub async fn receive_message(&mut self) -> Result<Value, String> {
+        loop {
+            match self.read.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    return serde_json::from_str(&text)
+                        .map_err(|e| format!("Parse error: {}", e));
+                }
+                Some(Ok(Message::Close(frame))) => {
+                    let detail = frame
+                        .map(|f| format!("code={}, reason={}", f.code, f.reason))
+                        .unwrap_or_else(|| "no details".into());
+                    return Err(format!("Server closed connection ({})", detail));
+                }
+                Some(Ok(Message::Ping(data))) => {
+                    let _ = self.write.send(Message::Pong(data)).await;
+                    continue;
+                }
+                Some(Ok(Message::Pong(_))) => continue,
+                Some(Err(e)) => return Err(format!("Read error: {}", e)),
+                None => return Err("Connection closed unexpectedly".into()),
+                _ => continue,
+            }
+        }
+    }
+
     /// Gracefully close the connection.
     pub async fn close(mut self) {
         let _ = self.write.send(Message::Close(None)).await;

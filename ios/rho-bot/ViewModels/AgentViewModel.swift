@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 class AgentViewModel: ObservableObject {
@@ -13,12 +14,25 @@ class AgentViewModel: ObservableObject {
     @Published var isEditingGoal = false
 
     private let api = APIClient.shared
+    private let ws = WebSocketClient.shared
+    private var cancellables = Set<AnyCancellable>()
     private var pollTimer: Timer?
     private var didInitialGoalSync = false
+
+    init() {
+        ws.$isConnected
+            .receive(on: RunLoop.main)
+            .sink { [weak self] connected in
+                self?.status.is_online = connected
+            }
+            .store(in: &cancellables)
+    }
 
     func fetchStatus() async {
         do {
             status = try await api.getAgentStatus()
+            // Force WS truth so REST doesn't override connection state
+            status.is_online = ws.isConnected
             // Only overwrite the text field on the first fetch or when the
             // user isn't actively editing.  This prevents the 5-second poll
             // from clobbering what they're typing.
@@ -38,7 +52,7 @@ class AgentViewModel: ObservableObject {
             let response = try await api.setGoal(goalText)
             status = AgentStatus(
                 session_id: response.session_id,
-                is_online: status.is_online,
+                is_online: ws.isConnected,
                 last_seen: status.last_seen,
                 total_actions: status.total_actions,
                 goal: response.goal
@@ -49,39 +63,19 @@ class AgentViewModel: ObservableObject {
         isLoading = false
     }
 
-    func startAgent() async {
-        isLoading = true
-        errorMessage = nil
-        do {
-            status = try await api.startAgent()
-            if !isEditingGoal {
-                goalText = status.goal
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
+    func startAgent() {
+        ws.connect()
     }
 
-    func stopAgent() async {
-        isLoading = true
-        errorMessage = nil
-        do {
-            status = try await api.stopAgent()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
+    func stopAgent() {
+        ws.disconnect()
     }
 
-    func toggleAgent() async {
-        let wasOnline = status.is_online
-        // Optimistic UI update so the toggle doesn't snap back
-        status.is_online = !wasOnline
-        if wasOnline {
-            await stopAgent()
+    func toggleAgent() {
+        if ws.isConnected {
+            stopAgent()
         } else {
-            await startAgent()
+            startAgent()
         }
     }
 
