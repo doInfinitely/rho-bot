@@ -35,7 +35,8 @@ struct ChatView: View {
                 FluidRecordButton(
                     isRecording: vm.isRecordingAudio,
                     onTap: { vm.toggleRecording() },
-                    size: 72
+                    size: 72,
+                    waveform: vm.waveform
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.top, 4)

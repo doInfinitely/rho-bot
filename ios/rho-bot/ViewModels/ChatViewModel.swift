@@ -27,11 +27,14 @@ class ChatViewModel: ObservableObject {
     @Published var isConnected = false
     @Published var awaitingUserResponse = false
     @Published var isRecordingAudio = false
+    @Published var waveform: [CGFloat] = Array(repeating: 0, count: 128)
 
     private let ws = WebSocketClient.shared
     private let tts = ElevenLabsService.shared
 
     init() {
+        // Forward audio levels from ElevenLabsService
+        tts.$waveform.assign(to: &$waveform)
         ws.onStep = { [weak self] step in
             guard let self else { return }
             if let thinking = step.thinking, !thinking.isEmpty {

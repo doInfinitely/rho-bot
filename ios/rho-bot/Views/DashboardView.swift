@@ -4,6 +4,7 @@ import UIKit
 
 struct DashboardView: View {
     @EnvironmentObject var agentVM: AgentViewModel
+    @ObservedObject private var tts = ElevenLabsService.shared
     @State private var isRecording = false
 
     var body: some View {
@@ -25,7 +26,8 @@ struct DashboardView: View {
                 FluidRecordButton(
                     isRecording: isRecording,
                     onTap: { toggleRecording() },
-                    size: 72
+                    size: 72,
+                    waveform: tts.waveform
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.top, 4)

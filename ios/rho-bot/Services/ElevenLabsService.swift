@@ -16,11 +16,13 @@ class ElevenLabsService: ObservableObject {
     @Published var isPlaying = false
     @Published var isRecording = false
     @Published var isTranscribing = false
+    @Published var waveform: [CGFloat] = Array(repeating: 0, count: 128)
 
     private let baseURL = "https://marionette-production.up.railway.app"
     private var audioPlayer: AVAudioPlayer?
     private var audioRecorder: AVAudioRecorder?
     private var recordingURL: URL?
+    private let audioEngine = AVAudioEngine()
 
     struct Voice: Identifiable, Codable {
         let voice_id: String
@@ -121,12 +123,51 @@ class ElevenLabsService: ObservableObject {
             audioRecorder = try AVAudioRecorder(url: fileURL, settings: settings)
             audioRecorder?.record()
             isRecording = true
+            startWaveformTap()
         } catch {
             print("Recording failed: \(error)")
         }
     }
 
+    private func startWaveformTap() {
+        let inputNode = audioEngine.inputNode
+        let format = inputNode.outputFormat(forBus: 0)
+        let sampleCount = 128
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            guard let data = buffer.floatChannelData?[0] else { return }
+            let frameCount = Int(buffer.frameLength)
+            let stride = max(1, frameCount / sampleCount)
+
+            var samples = [CGFloat]()
+            samples.reserveCapacity(sampleCount)
+            for i in Swift.stride(from: 0, to: min(frameCount, sampleCount * stride), by: stride) {
+                // Raw PCM sample, typically -1..1
+                samples.append(CGFloat(data[i]))
+            }
+            // Pad if needed
+            while samples.count < sampleCount { samples.append(0) }
+
+            Task { @MainActor [weak self] in
+                self?.waveform = samples
+            }
+        }
+
+        do {
+            try audioEngine.start()
+        } catch {
+            print("Audio engine failed: \(error)")
+        }
+    }
+
+    private func stopWaveformTap() {
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+        waveform = Array(repeating: 0, count: 128)
+    }
+
     func stopRecordingAndTranscribe() async -> String? {
+        stopWaveformTap()
         audioRecorder?.stop()
         isRecording = false
 

@@ -15,33 +15,18 @@ struct FluidRecordButton: View {
     let isRecording: Bool
     let onTap: () -> Void
     var size: CGFloat = 48
-
-    @State private var pulse = false
-    @State private var rotation: Double = 0
+    var waveform: [CGFloat] = []
 
     var body: some View {
         Button(action: onTap) {
             ZStack {
-                // Pulsing ring animation (always visible when recording)
+                // Waveform ring (outermost)
                 if isRecording {
-                    Circle()
-                        .stroke(
-                            AngularGradient(
-                                colors: [.blue, .cyan, .blue.opacity(0.3), .cyan, .blue],
-                                center: .center
-                            ),
-                            lineWidth: 3
-                        )
-                        .frame(width: size + 14, height: size + 14)
-                        .rotationEffect(.degrees(rotation))
-
-                    Circle()
-                        .fill(Color.blue.opacity(0.15))
-                        .frame(width: size + 8, height: size + 8)
-                        .scaleEffect(pulse ? 1.15 : 0.95)
+                    WaveformRing(samples: waveform, radius: size / 2 + 16)
+                        .frame(width: size + 40, height: size + 40)
                 }
 
-                // Metal fluid sim layer (behind the mic icon, clipped to circle)
+                // Metal fluid sim layer
                 if isRecording {
                     FluidCircleView(isActive: true)
                         .frame(width: size + 20, height: size + 20)
@@ -59,23 +44,55 @@ struct FluidRecordButton: View {
                             .foregroundStyle(isRecording ? .white : .blue)
                     )
             }
-            .frame(width: size + 22, height: size + 22)
+            .frame(width: size + 44, height: size + 44)
         }
         .buttonStyle(.plain)
-        .onChange(of: isRecording) {
-            if isRecording {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    pulse = true
-                }
-                withAnimation(.linear(duration: 3).repeatForever(autoreverses: false)) {
-                    rotation = 360
-                }
-            } else {
-                withAnimation(.default) {
-                    pulse = false
-                    rotation = 0
+    }
+}
+
+// MARK: - Sinusoidal Waveform Ring
+
+struct WaveformRing: View {
+    let samples: [CGFloat]
+    let radius: CGFloat
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+            let segments = 360
+            let count = max(samples.count, 1)
+
+            var path = Path()
+            for i in 0...segments {
+                let angle = (CGFloat(i) / CGFloat(segments)) * 2 * .pi
+
+                // Interpolate raw PCM sample for this angle
+                let sampleIndex = CGFloat(i) / CGFloat(segments) * CGFloat(count)
+                let idx0 = Int(sampleIndex) % count
+                let idx1 = (idx0 + 1) % count
+                let frac = sampleIndex - floor(sampleIndex)
+                let s0 = idx0 < samples.count ? samples[idx0] : 0
+                let s1 = idx1 < samples.count ? samples[idx1] : 0
+                let sample = s0 + (s1 - s0) * frac
+
+                // PCM values are -1..1; map to radius displacement
+                // Silence (0) = perfect circle, sound pushes outward/inward
+                let r = radius + sample * 12
+
+                let pt = CGPoint(x: center.x + r * cos(angle), y: center.y + r * sin(angle))
+                if i == 0 {
+                    path.move(to: pt)
+                } else {
+                    path.addLine(to: pt)
                 }
             }
+            path.closeSubpath()
+
+            context.stroke(path, with: .linearGradient(
+                Gradient(colors: [.blue, .cyan, .blue]),
+                startPoint: CGPoint(x: 0, y: 0),
+                endPoint: CGPoint(x: canvasSize.width, y: canvasSize.height)
+            ), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
         }
     }
 }
