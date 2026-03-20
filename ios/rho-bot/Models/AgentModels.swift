@@ -2,7 +2,7 @@ import Foundation
 
 struct AgentStatus: Codable {
     let session_id: String?
-    let is_online: Bool
+    var is_online: Bool
     let last_seen: Double?
     let total_actions: Int
     let goal: String

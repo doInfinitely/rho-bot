@@ -75,7 +75,10 @@ class AgentViewModel: ObservableObject {
     }
 
     func toggleAgent() async {
-        if status.is_online {
+        let wasOnline = status.is_online
+        // Optimistic UI update so the toggle doesn't snap back
+        status.is_online = !wasOnline
+        if wasOnline {
             await stopAgent()
         } else {
             await startAgent()
