@@ -17,8 +17,12 @@ pub struct AppSettings {
     #[serde(default = "default_marionette_url")]
     pub marionette_url: String,
     /// When true, the agent loop connects to marionette instead of rho-bot server.
-    #[serde(default)]
+    #[serde(default = "default_use_marionette")]
     pub use_marionette: bool,
+}
+
+fn default_use_marionette() -> bool {
+    true
 }
 
 fn default_marionette_url() -> String {

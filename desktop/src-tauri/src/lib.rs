@@ -329,7 +329,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     let s = settings.lock().await;
                     let use_marionette = s.use_marionette;
-                    log::info!("Auto-starting recording on launch");
+                    log::info!("Auto-starting recording on launch (use_marionette={})", use_marionette);
                     agent.update_settings(s.clone()).await;
                     drop(s);
                     if let Err(e) = agent.start_recording().await {
