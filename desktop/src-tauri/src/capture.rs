@@ -94,12 +94,20 @@ pub fn capture_screen() -> Result<String, String> {
 
     let dynamic_img = image::DynamicImage::ImageRgba8(img_buf);
 
-    let mut png_buf = std::io::Cursor::new(Vec::new());
-    dynamic_img
-        .write_to(&mut png_buf, image::ImageFormat::Png)
-        .map_err(|e| format!("PNG encoding failed: {}", e))?;
+    // Resize to max 1280px wide to keep LLM API payloads under size limits
+    let resized = if width > 1280 {
+        dynamic_img.resize(1280, 1280 * height / width, image::imageops::FilterType::Triangle)
+    } else {
+        dynamic_img
+    };
 
-    let encoded = base64::engine::general_purpose::STANDARD.encode(png_buf.into_inner());
+    // Encode as JPEG (much smaller than PNG for screenshots)
+    let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+    resized
+        .write_to(&mut jpeg_buf, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("JPEG encoding failed: {}", e))?;
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(jpeg_buf.into_inner());
     Ok(encoded)
 }
 

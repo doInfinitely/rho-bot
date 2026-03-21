@@ -68,15 +68,19 @@ mod macos {
     /// We use the keycode 0 (key 'a') as a carrier and override the
     /// Unicode string on the event so the correct character is typed
     /// regardless of keyboard layout.
+    ///
+    /// Explicitly clears all modifier flags so residual Command/Shift/etc.
+    /// from prior hotkey actions don't turn letters into shortcuts.
     pub fn type_text(text: &str) -> Result<(), String> {
         use foreign_types_shared::ForeignType;
 
         let source = make_source();
 
         for ch in text.chars() {
-            // Key down with unicode character
+            // Key down with unicode character — clear all modifier flags
             let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
                 .map_err(|_| "Failed to create key-down event".to_string())?;
+            down.set_flags(CGEventFlags::CGEventFlagNull);
 
             // Set the Unicode string on the event via CoreGraphics C API
             let chars = [ch as u16];
@@ -89,10 +93,14 @@ mod macos {
             }
             down.post(CGEventTapLocation::HID);
 
-            // Key up
+            // Key up — also clear flags
             let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
                 .map_err(|_| "Failed to create key-up event".to_string())?;
+            up.set_flags(CGEventFlags::CGEventFlagNull);
             up.post(CGEventTapLocation::HID);
+
+            // Small delay between characters to avoid overwhelming the event system
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
         Ok(())
     }
@@ -108,20 +116,40 @@ mod macos {
     }
 
     /// Press a single key (by name) with optional modifiers.
+    ///
+    /// Properly releases modifier flags on key-up and sends explicit
+    /// modifier key-up events so the system doesn't think they're stuck.
     pub fn keypress(key: &str, modifiers: &[String]) -> Result<(), String> {
         let source = make_source();
         let keycode = key_name_to_code(key);
         let flags = modifiers_to_flags(modifiers);
 
+        // Key down with modifiers held
         let down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
             .map_err(|_| "Failed to create keypress-down event".to_string())?;
         down.set_flags(flags);
         down.post(CGEventTapLocation::HID);
 
-        let up = CGEvent::new_keyboard_event(source, keycode, false)
+        // Key up with flags cleared
+        let up = CGEvent::new_keyboard_event(source.clone(), keycode, false)
             .map_err(|_| "Failed to create keypress-up event".to_string())?;
-        up.set_flags(flags);
+        up.set_flags(CGEventFlags::CGEventFlagNull);
         up.post(CGEventTapLocation::HID);
+
+        // Send explicit modifier key-up events to ensure they're released
+        for m in modifiers {
+            let mod_keycode: CGKeyCode = match m.to_lowercase().as_str() {
+                "cmd" | "command" => 0x37,   // kVK_Command
+                "shift" => 0x38,              // kVK_Shift
+                "alt" | "option" => 0x3A,     // kVK_Option
+                "ctrl" | "control" => 0x3B,   // kVK_Control
+                _ => continue,
+            };
+            let mod_up = CGEvent::new_keyboard_event(source.clone(), mod_keycode, false)
+                .map_err(|_| "Failed to create modifier-up event".to_string())?;
+            mod_up.set_flags(CGEventFlags::CGEventFlagNull);
+            mod_up.post(CGEventTapLocation::HID);
+        }
 
         Ok(())
     }
@@ -198,13 +226,19 @@ mod macos {
     }
 }
 
-/// Execute a batch of actions sequentially with a small delay between them.
+/// Execute a batch of actions sequentially with delays between them.
 pub fn execute_batch(actions: &[Action]) -> Result<(), String> {
     for (i, action) in actions.iter().enumerate() {
         execute(action)?;
-        // Small delay between actions (except after the last one)
+        // Delay between actions (except after the last one)
         if i + 1 < actions.len() && action.action_type != "wait" && action.action_type != "noop" {
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            // Hotkeys (e.g. Cmd+Space) trigger UI transitions that need time to render
+            let delay = match action.action_type.as_str() {
+                "hotkey" | "osascript" => 1000,
+                "keypress" => 300,
+                _ => 150,
+            };
+            std::thread::sleep(std::time::Duration::from_millis(delay));
         }
     }
     Ok(())
@@ -241,6 +275,25 @@ pub fn execute(action: &Action) -> Result<(), String> {
                 let coords = action.coordinates.as_ref().unwrap_or(&default_coords);
                 let delta = coords.get(1).copied().unwrap_or(100.0) as i32;
                 macos::scroll(delta)
+            }
+            "osascript" => {
+                let script = action.text.as_deref().ok_or("osascript requires text")?;
+                log::info!("Running osascript: {}", &script[..script.len().min(200)]);
+                let output = std::process::Command::new("osascript")
+                    .arg("-e")
+                    .arg(script)
+                    .output()
+                    .map_err(|e| format!("osascript failed to launch: {}", e))?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    log::warn!("osascript error: {}", stderr);
+                    // Don't fail the batch — log and continue
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if !stdout.is_empty() {
+                    log::info!("osascript output: {}", stdout.trim());
+                }
+                Ok(())
             }
             "wait" | "noop" => Ok(()),
             other => Err(format!("Unknown action type: {}", other)),

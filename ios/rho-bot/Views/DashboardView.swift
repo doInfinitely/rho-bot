@@ -9,32 +9,28 @@ struct DashboardView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(spacing: 24) {
-                        statusCard
-                        goalSection
-                        statsSection
-                    }
-                    .padding()
+            ScrollView {
+                VStack(spacing: 24) {
+                    statusCard
+                    goalSection
+                    statsSection
                 }
-                .onTapGesture {
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                .padding()
+                .padding(.bottom, 100)
+            }
+            .onTapGesture {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
+            .overlay {
+                GeometryReader { geo in
+                    FluidRecordButton(
+                        isRecording: isRecording,
+                        onTap: { toggleRecording() },
+                        size: 72,
+                        waveform: tts.waveform
+                    )
+                    .position(x: geo.size.width / 2, y: geo.size.height - 120)
                 }
-
-                // Record button centered above tab bar (matches ChatView position)
-                FluidRecordButton(
-                    isRecording: isRecording,
-                    onTap: { toggleRecording() },
-                    size: 72,
-                    waveform: tts.waveform
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.top, 4)
-
-                // Spacer to match ChatView's input bar height
-                Spacer()
-                    .frame(height: 58)
             }
             .navigationTitle("Dashboard")
             .refreshable {

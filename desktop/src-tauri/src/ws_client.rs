@@ -270,6 +270,14 @@ impl WsClient {
         }
     }
 
+    /// Send a WebSocket ping to keep the connection alive.
+    pub async fn send_ping(&mut self) -> Result<(), String> {
+        self.write
+            .send(Message::Ping(vec![]))
+            .await
+            .map_err(|e| format!("Ping failed: {}", e))
+    }
+
     /// Gracefully close the connection.
     pub async fn close(mut self) {
         let _ = self.write.send(Message::Close(None)).await;

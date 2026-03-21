@@ -65,7 +65,8 @@ class ChatViewModel: ObservableObject {
         ws.onError = { [weak self] msg in
             guard let self else { return }
             self.messages.append(ChatMessage(type: .error, content: msg))
-            self.isRunning = false
+            // Don't set isRunning = false — errors during a task are recoverable.
+            // The agent will retry on the next step. User can still hit stop.
         }
 
         ws.onStopped = { [weak self] in

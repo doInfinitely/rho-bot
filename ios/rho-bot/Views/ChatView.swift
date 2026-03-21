@@ -18,6 +18,7 @@ struct ChatView: View {
                         }
                         .padding(.horizontal)
                         .padding(.top, 8)
+                        .padding(.bottom, vm.isRunning ? 8 : 120)
                     }
                     .onTapGesture {
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -29,18 +30,6 @@ struct ChatView: View {
                             }
                         }
                     }
-                }
-
-                // Record button centered above input (hidden when task running)
-                if !vm.isRunning {
-                    FluidRecordButton(
-                        isRecording: vm.isRecordingAudio,
-                        onTap: { vm.toggleRecording() },
-                        size: 72,
-                        waveform: vm.waveform
-                    )
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 4)
                 }
 
                 Divider()
@@ -99,6 +88,21 @@ struct ChatView: View {
                     }
                     .disabled(vm.messages.isEmpty)
                 }
+            }
+        }
+        .overlay {
+            // Mic button floats at fixed screen position, keyboard cannot move it
+            if !vm.isRunning {
+                GeometryReader { geo in
+                    FluidRecordButton(
+                        isRecording: vm.isRecordingAudio,
+                        onTap: { vm.toggleRecording() },
+                        size: 72,
+                        waveform: vm.waveform
+                    )
+                    .position(x: geo.size.width / 2, y: geo.size.height - 120)
+                }
+                .ignoresSafeArea(.keyboard)
             }
         }
     }
