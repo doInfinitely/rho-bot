@@ -19,10 +19,17 @@ pub struct AppSettings {
     /// When true, the agent loop connects to marionette instead of rho-bot server.
     #[serde(default = "default_use_marionette")]
     pub use_marionette: bool,
+    /// Seconds of no user input before capture loops pause to save memory.
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
 }
 
 fn default_use_marionette() -> bool {
     true
+}
+
+fn default_idle_timeout_secs() -> u64 {
+    120
 }
 
 fn default_marionette_url() -> String {
@@ -38,6 +45,7 @@ impl Default for AppSettings {
             capture_interval_ms: 500,
             marionette_url: default_marionette_url(),
             use_marionette: true,
+            idle_timeout_secs: default_idle_timeout_secs(),
         }
     }
 }

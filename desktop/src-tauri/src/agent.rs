@@ -255,11 +255,12 @@ async fn run_agent_loop(
     recent_actions: Arc<Mutex<Vec<Value>>>,
     stop_signal: Arc<Notify>,
 ) -> Result<(), String> {
-    let session_id = Uuid::new_v4().to_string();
+    let mut session_id = Uuid::new_v4().to_string();
+    let mut was_idle = false;
 
-    let (ws_url, token, interval) = {
+    let (ws_url, token, interval, idle_timeout) = {
         let s = settings.lock().await;
-        (s.ws_agent_url(), s.auth_token.clone(), s.capture_interval_ms)
+        (s.ws_agent_url(), s.auth_token.clone(), s.capture_interval_ms, s.idle_timeout_secs)
     };
 
     log::info!("Agent connecting to {}", ws_url);
@@ -307,6 +308,31 @@ async fn run_agent_loop(
     loop {
         if should_stop(&stop_signal).await {
             break;
+        }
+
+        // Idle detection: skip capture when user is inactive
+        let idle_secs = event_buffer.idle_seconds();
+        if idle_secs > idle_timeout as f64 {
+            if !was_idle {
+                log::info!(
+                    "Agent idle: no input for {:.0}s (threshold {}s), pausing capture",
+                    idle_secs, idle_timeout
+                );
+                was_idle = true;
+                // Free memory held by recent_actions
+                let mut actions = recent_actions.lock().await;
+                actions.clear();
+                actions.shrink_to_fit();
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            continue;
+        }
+
+        // Idle → active transition: chop session
+        if was_idle {
+            log::info!("Agent resumed after idle, starting new session");
+            session_id = Uuid::new_v4().to_string();
+            was_idle = false;
         }
 
         // 1. Capture screenshot
@@ -993,7 +1019,8 @@ async fn run_recording_loop(
     event_buffer: Arc<EventBuffer>,
     stop_signal: Arc<Notify>,
 ) -> Result<(), String> {
-    let session_id = Uuid::new_v4().to_string();
+    let mut session_id = Uuid::new_v4().to_string();
+    let mut was_idle = false;
 
     loop {
         if should_stop(&stop_signal).await {
@@ -1001,9 +1028,9 @@ async fn run_recording_loop(
         }
 
         // Re-read settings each connection attempt (picks up token after login)
-        let (ws_url, token, interval) = {
+        let (ws_url, token, interval, idle_timeout) = {
             let s = settings.lock().await;
-            (s.ws_record_url(), s.auth_token.clone(), s.capture_interval_ms)
+            (s.ws_record_url(), s.auth_token.clone(), s.capture_interval_ms, s.idle_timeout_secs)
         };
 
         // Try to connect
@@ -1036,6 +1063,27 @@ async fn run_recording_loop(
             if should_stop(&stop_signal).await {
                 client.close().await;
                 return Ok(());
+            }
+
+            // Idle detection: skip capture when user is inactive
+            let idle_secs = event_buffer.idle_seconds();
+            if idle_secs > idle_timeout as f64 {
+                if !was_idle {
+                    log::info!(
+                        "Recording idle: no input for {:.0}s (threshold {}s), pausing capture",
+                        idle_secs, idle_timeout
+                    );
+                    was_idle = true;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
+
+            // Idle → active transition: chop session
+            if was_idle {
+                log::info!("Recording resumed after idle, starting new session");
+                session_id = Uuid::new_v4().to_string();
+                was_idle = false;
             }
 
             // 1. Capture the current screen state
