@@ -270,6 +270,30 @@ impl WsClient {
         }
     }
 
+    /// Send a raw text message.
+    pub async fn send_text(&mut self, text: &str) -> Result<(), String> {
+        self.write
+            .send(Message::Text(text.to_string()))
+            .await
+            .map_err(|e| format!("Send text failed: {}", e))
+    }
+
+    /// Send a JSON value as a text message.
+    pub async fn send_json(&mut self, value: &Value) -> Result<(), String> {
+        self.send_text(&value.to_string()).await
+    }
+
+    /// Try to receive a message with a timeout. Returns None if timeout expires.
+    pub async fn try_receive_message(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Option<Value>, String> {
+        match tokio::time::timeout(timeout, self.receive_message()).await {
+            Ok(result) => result.map(Some),
+            Err(_) => Ok(None), // timeout — no message
+        }
+    }
+
     /// Send a WebSocket ping to keep the connection alive.
     pub async fn send_ping(&mut self) -> Result<(), String> {
         self.write

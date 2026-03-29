@@ -335,6 +335,10 @@ pub fn run() {
                     if let Err(e) = agent.start_recording().await {
                         log::error!("Failed to auto-start recording: {}", e);
                     }
+                    // Auto-start screen publisher
+                    if let Err(e) = agent.start_screen_publisher().await {
+                        log::error!("Failed to auto-start screen publisher: {}", e);
+                    }
                     // Auto-start agent in standby mode for marionette
                     if use_marionette {
                         log::info!("Auto-starting marionette standby agent");

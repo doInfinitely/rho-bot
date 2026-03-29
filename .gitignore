@@ -12,3 +12,4 @@ __pycache__/
 *.pth
 .DS_Store
 .vercel/
+.vercel

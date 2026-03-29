@@ -122,6 +122,17 @@ impl AppSettings {
         format!("{}/ws/record", ws_base)
     }
 
+    /// Derive the WebSocket screen-streaming URL from the REST base URL.
+    pub fn ws_screen_url(&self) -> String {
+        let base = self.rest_base();
+        let ws_base = if base.starts_with("https://") {
+            base.replacen("https://", "wss://", 1)
+        } else {
+            base.replacen("http://", "ws://", 1)
+        };
+        format!("{}/ws/screen", ws_base)
+    }
+
     pub fn is_logged_in(&self) -> bool {
         !self.auth_token.is_empty()
     }

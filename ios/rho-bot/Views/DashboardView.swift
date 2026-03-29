@@ -31,6 +31,7 @@ struct DashboardView: View {
                     )
                     .position(x: geo.size.width / 2, y: geo.size.height - 120)
                 }
+                .ignoresSafeArea(.keyboard)
             }
             .navigationTitle("Dashboard")
             .refreshable {

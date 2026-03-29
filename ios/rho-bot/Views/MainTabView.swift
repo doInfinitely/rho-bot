@@ -23,6 +23,11 @@ struct MainTabView: View {
                     Label("Sessions", systemImage: "list.bullet.rectangle")
                 }
 
+            ScreenView()
+                .tabItem {
+                    Label("Screen", systemImage: "display")
+                }
+
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")

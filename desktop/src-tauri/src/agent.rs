@@ -30,6 +30,8 @@ pub struct AgentHandle {
     recording: Arc<Mutex<bool>>,
     /// The task description for the marionette agent.
     task: Arc<Mutex<String>>,
+    screen_stop: Arc<Notify>,
+    screen_publishing: Arc<Mutex<bool>>,
 }
 
 impl AgentHandle {
@@ -45,6 +47,8 @@ impl AgentHandle {
             recording_stop: Arc::new(Notify::new()),
             recording: Arc::new(Mutex::new(false)),
             task: Arc::new(Mutex::new(String::new())),
+            screen_stop: Arc::new(Notify::new()),
+            screen_publishing: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -221,6 +225,36 @@ impl AgentHandle {
     pub async fn stop_recording(&self) {
         self.recording_stop.notify_one();
         *self.recording.lock().await = false;
+    }
+
+    pub async fn start_screen_publisher(&self) -> Result<(), String> {
+        let mut publishing = self.screen_publishing.lock().await;
+        if *publishing {
+            return Err("Already publishing screen".into());
+        }
+        *publishing = true;
+        drop(publishing);
+
+        let settings = self.settings.clone();
+        let stop_signal = self.screen_stop.clone();
+        let publishing = self.screen_publishing.clone();
+
+        tokio::spawn(async move {
+            let result = run_screen_publisher_loop(settings, stop_signal).await;
+
+            if let Err(e) = result {
+                log::error!("Screen publisher loop error: {}", e);
+            }
+
+            *publishing.lock().await = false;
+        });
+
+        Ok(())
+    }
+
+    pub async fn stop_screen_publisher(&self) {
+        self.screen_stop.notify_one();
+        *self.screen_publishing.lock().await = false;
     }
 
     pub async fn update_settings(&self, new: AppSettings) {
@@ -1138,5 +1172,172 @@ async fn run_recording_loop(
         *state.lock().await = "disconnected".into();
         // Brief pause before reconnecting
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+/// Screen publisher loop: connects to /ws/screen, waits for start_stream,
+/// then captures and sends JPEG frames to the server for relay to iOS subscribers.
+/// Reconnects with backoff. Re-reads settings each attempt.
+async fn run_screen_publisher_loop(
+    settings: Arc<Mutex<AppSettings>>,
+    stop_signal: Arc<Notify>,
+) -> Result<(), String> {
+    loop {
+        if should_stop(&stop_signal).await {
+            return Ok(());
+        }
+
+        // Re-read settings each connection attempt (picks up token after login)
+        let (ws_url, token) = {
+            let s = settings.lock().await;
+            (s.ws_screen_url(), s.auth_token.clone())
+        };
+
+        // Skip if not logged in
+        if token.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            continue;
+        }
+
+        log::info!("Screen publisher: connecting to {}", ws_url);
+
+        let mut client = match WsClient::connect(&ws_url, &token).await {
+            Ok(c) => {
+                log::info!("Screen publisher WebSocket connected");
+                c
+            }
+            Err(e) => {
+                log::warn!("Screen publisher connect failed (will retry): {}", e);
+                for _ in 0..10 {
+                    if should_stop(&stop_signal).await {
+                        return Ok(());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                continue;
+            }
+        };
+
+        // Register as publisher
+        if let Err(e) = client.send_json(&json!({"type": "register", "role": "publisher"})).await {
+            log::error!("Screen publisher register failed: {}", e);
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            continue;
+        }
+
+        log::info!("Screen publisher: registered, waiting for start_stream");
+        let mut last_ping = std::time::Instant::now();
+        let ping_interval = std::time::Duration::from_secs(30);
+        let mut streaming = false;
+        let mut capture_interval_ms: u64 = 1000;
+        let mut should_reconnect = false;
+
+        // Inner loop: wait for commands, stream when requested
+        loop {
+            if should_stop(&stop_signal).await {
+                client.close().await;
+                return Ok(());
+            }
+
+            // Keepalive ping
+            if last_ping.elapsed() >= ping_interval {
+                if let Err(e) = client.send_ping().await {
+                    log::warn!("Screen publisher ping failed: {}, reconnecting", e);
+                    should_reconnect = true;
+                    break;
+                }
+                last_ping = std::time::Instant::now();
+            }
+
+            if streaming {
+                // Capture and send a frame
+                let screenshot = match capture::capture_screen() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        log::warn!("Screen capture failed: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_millis(capture_interval_ms)).await;
+                        continue;
+                    }
+                };
+
+                // Get screen dimensions (reuse window bounds as approximation)
+                let (_, _, ww, wh) = platform::focused_window_bounds();
+
+                let frame = json!({
+                    "type": "frame",
+                    "data": screenshot,
+                    "timestamp": now(),
+                    "width": ww,
+                    "height": wh,
+                });
+
+                if let Err(e) = client.send_json(&frame).await {
+                    log::error!("Screen publisher frame send failed: {}", e);
+                    should_reconnect = true;
+                    break;
+                }
+
+                // Check for incoming messages (stop_stream, set_interval) without blocking
+                match client.try_receive_message(std::time::Duration::from_millis(1)).await {
+                    Ok(Some(msg)) => {
+                        match msg.get("type").and_then(|t| t.as_str()) {
+                            Some("stop_stream") => {
+                                log::info!("Screen publisher: stop_stream received, pausing");
+                                streaming = false;
+                            }
+                            Some("set_interval") => {
+                                if let Some(ms) = msg.get("interval_ms").and_then(|v| v.as_u64()) {
+                                    log::info!("Screen publisher: interval changed to {}ms", ms);
+                                    capture_interval_ms = ms.max(100); // minimum 100ms
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(None) => {} // no message (timeout)
+                    Err(e) => {
+                        log::warn!("Screen publisher receive error: {}", e);
+                        should_reconnect = true;
+                        break;
+                    }
+                }
+
+                // Sleep for the capture interval (minus the time spent capturing)
+                tokio::time::sleep(std::time::Duration::from_millis(capture_interval_ms)).await;
+            } else {
+                // Not streaming — wait for start_stream with ping keepalive
+                match client.try_receive_message(std::time::Duration::from_secs(5)).await {
+                    Ok(Some(msg)) => {
+                        match msg.get("type").and_then(|t| t.as_str()) {
+                            Some("start_stream") => {
+                                if let Some(ms) = msg.get("interval_ms").and_then(|v| v.as_u64()) {
+                                    capture_interval_ms = ms.max(100);
+                                }
+                                log::info!("Screen publisher: start_stream received, interval={}ms", capture_interval_ms);
+                                streaming = true;
+                            }
+                            Some("set_interval") => {
+                                if let Some(ms) = msg.get("interval_ms").and_then(|v| v.as_u64()) {
+                                    capture_interval_ms = ms.max(100);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(None) => {} // timeout — loop back to check stop & ping
+                    Err(e) => {
+                        log::warn!("Screen publisher connection lost: {}", e);
+                        should_reconnect = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Connection broke — retry after a brief pause
+        if should_reconnect {
+            log::info!("Screen publisher: connection lost, reconnecting in 3s...");
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
     }
 }

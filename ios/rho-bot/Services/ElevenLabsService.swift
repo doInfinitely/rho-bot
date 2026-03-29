@@ -18,7 +18,7 @@ class ElevenLabsService: ObservableObject {
     @Published var isTranscribing = false
     @Published var waveform: [CGFloat] = Array(repeating: 0, count: 128)
 
-    private let baseURL = "https://marionette-production.up.railway.app"
+    private var baseURL: String { APIClient.shared.baseURL }
     private var audioPlayer: AVAudioPlayer?
     private var audioRecorder: AVAudioRecorder?
     private var recordingURL: URL?
@@ -50,9 +50,13 @@ class ElevenLabsService: ObservableObject {
     // MARK: - Voices
 
     func fetchVoices() async {
-        guard let url = URL(string: "\(baseURL)/voices") else { return }
+        guard let url = URL(string: "\(baseURL)/api/voice/voices") else { return }
+        var request = URLRequest(url: url)
+        if let token = APIClient.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await URLSession.shared.data(for: request)
             struct Resp: Decodable { let voices: [Voice] }
             let resp = try JSONDecoder().decode(Resp.self, from: data)
             voices = resp.voices
@@ -66,10 +70,13 @@ class ElevenLabsService: ObservableObject {
     func speak(_ text: String) async {
         guard ttsEnabled, !text.isEmpty else { return }
 
-        guard let url = URL(string: "\(baseURL)/tts") else { return }
+        guard let url = URL(string: "\(baseURL)/api/voice/tts") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = APIClient.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         let body: [String: String] = ["text": text, "voice_id": selectedVoiceId]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -131,6 +138,8 @@ class ElevenLabsService: ObservableObject {
 
     private func startWaveformTap() {
         let inputNode = audioEngine.inputNode
+        // Remove any existing tap to avoid crash on double-install
+        inputNode.removeTap(onBus: 0)
         let format = inputNode.outputFormat(forBus: 0)
         let sampleCount = 128
 
@@ -176,7 +185,7 @@ class ElevenLabsService: ObservableObject {
         isTranscribing = true
         defer { isTranscribing = false }
 
-        guard let uploadURL = URL(string: "\(baseURL)/stt") else { return nil }
+        guard let uploadURL = URL(string: "\(baseURL)/api/voice/stt") else { return nil }
 
         do {
             let audioData = try Data(contentsOf: fileURL)
@@ -184,6 +193,9 @@ class ElevenLabsService: ObservableObject {
             var request = URLRequest(url: uploadURL)
             request.httpMethod = "POST"
             request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            if let token = APIClient.shared.token {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
 
             var body = Data()
             // Audio file part

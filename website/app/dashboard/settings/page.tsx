@@ -34,11 +34,21 @@ export default function SettingsPage() {
             and receiving action predictions.
           </p>
           <a
-            href="#"
+            href="/api/releases/download?arch=arm64"
             className="inline-block px-4 py-2 text-sm font-medium rounded-lg bg-rho-600 hover:bg-rho-700 transition-colors"
           >
-            Download for macOS
+            Download for Apple Silicon
           </a>
+          <p className="text-xs text-neutral-500 mt-2">
+            Latest macOS release from GitHub. If you have an Intel Mac, use{" "}
+            <a
+              href="/api/releases/download?arch=x64"
+              className="text-rho-400 hover:text-rho-300 transition-colors"
+            >
+              the Intel build
+            </a>
+            .
+          </p>
         </div>
 
         <div>

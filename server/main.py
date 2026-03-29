@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse
 
 from server.config import settings
 from server.models.database import init_db
-from server.routers import api, auth, billing, ws
+from server.routers import api, auth, billing, screen, voice, ws
 from server.services.context_service import ContextService
 from server.services.model_service import ModelService
 
@@ -107,6 +107,8 @@ app.include_router(auth.router)
 app.include_router(ws.router)
 app.include_router(api.router)
 app.include_router(billing.router)
+app.include_router(voice.router)
+app.include_router(screen.router)
 
 
 @app.get("/health")

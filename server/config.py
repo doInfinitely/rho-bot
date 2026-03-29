@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     stripe_team_price_id: str = ""
     frontend_url: str = "http://localhost:3000"
 
+    # ElevenLabs (voice proxy)
+    elevenlabs_api_key: str = ""
+
     @model_validator(mode="after")
     def _fix_database_url(self) -> "Settings":
         """Normalize the database URL after pydantic-settings loads env vars.
