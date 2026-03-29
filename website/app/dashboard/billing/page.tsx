@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { CreditCard, ArrowRight, Heart } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { CreditCard, ArrowRight, Zap } from "lucide-react";
 import {
   getSubscription,
   createCheckoutSession,
@@ -16,7 +15,6 @@ export default function BillingPage() {
 
   const [sub, setSub] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
-  const [amount, setAmount] = useState(5);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   useEffect(() => {
@@ -34,10 +32,9 @@ export default function BillingPage() {
   }, []);
 
   async function handleCheckout() {
-    if (amount <= 0) return;
     setCheckoutLoading(true);
     try {
-      const { url } = await createCheckoutSession(amount);
+      const { url } = await createCheckoutSession();
       window.location.href = url;
     } catch (err: any) {
       alert(err.message || "Failed to create checkout session");
@@ -63,18 +60,22 @@ export default function BillingPage() {
     );
   }
 
-  const isSupporter = sub && sub.amount > 0 && sub.status === "active";
+  const isPro = sub && sub.plan_id === "pro" && sub.status === "active";
+  const tasksUsed = sub?.tasks_used ?? 0;
+  const tasksLimit = sub?.tasks_limit ?? 25;
+  const isUnlimited = tasksLimit >= 999_999_999;
+  const usagePercent = isUnlimited ? 0 : Math.min(100, (tasksUsed / tasksLimit) * 100);
 
   return (
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight">Billing</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Pay what you want — every bit helps us keep building
+          Manage your subscription and track usage
         </p>
       </div>
 
-      {/* Current status */}
+      {/* Current plan */}
       <div className="p-6 rounded-xl border border-neutral-800 bg-neutral-900/50 mb-8">
         <div className="flex items-start justify-between">
           <div>
@@ -82,11 +83,9 @@ export default function BillingPage() {
               Current Plan
             </h2>
             <p className="text-xl font-bold">
-              {isSupporter
-                ? `Supporter — $${(sub.amount / 100).toFixed(0)}/mo`
-                : "Free"}
+              {isPro ? "Pro — Unlimited" : "Free — 25 tasks/mo"}
             </p>
-            {sub && sub.current_period_end && isSupporter && (
+            {sub && sub.current_period_end && isPro && (
               <p className="text-sm text-neutral-500 mt-1">
                 {sub.status === "active"
                   ? `Renews ${new Date(sub.current_period_end * 1000).toLocaleDateString()}`
@@ -95,7 +94,7 @@ export default function BillingPage() {
             )}
           </div>
 
-          {isSupporter && (
+          {isPro && (
             <button
               onClick={handleManageBilling}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg border border-neutral-700 hover:border-neutral-600 text-neutral-300 hover:text-neutral-100 transition-colors"
@@ -107,60 +106,54 @@ export default function BillingPage() {
         </div>
       </div>
 
-      {/* Pay what you want */}
-      {!isSupporter && (
-        <div className="p-8 rounded-xl border border-neutral-800 bg-neutral-900/50">
+      {/* Usage */}
+      <div className="p-6 rounded-xl border border-neutral-800 bg-neutral-900/50 mb-8">
+        <h2 className="text-sm font-medium text-neutral-400 mb-3">
+          Tasks This Month
+        </h2>
+        <div className="flex items-baseline gap-2 mb-3">
+          <span className="text-3xl font-bold">{tasksUsed}</span>
+          <span className="text-sm text-neutral-500">
+            / {isUnlimited ? "Unlimited" : tasksLimit}
+          </span>
+        </div>
+        {!isUnlimited && (
+          <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                usagePercent >= 90
+                  ? "bg-red-500"
+                  : usagePercent >= 70
+                    ? "bg-yellow-500"
+                    : "bg-rho-500"
+              }`}
+              style={{ width: `${usagePercent}%` }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Upgrade CTA for free users */}
+      {!isPro && (
+        <div className="p-8 rounded-xl border border-rho-500/30 bg-rho-950/20">
           <div className="flex items-center gap-2 mb-4">
-            <Heart className="w-5 h-5 text-rho-400" />
-            <h2 className="text-lg font-semibold">Support rho-bot</h2>
+            <Zap className="w-5 h-5 text-rho-400" />
+            <h2 className="text-lg font-semibold">Upgrade to Pro</h2>
           </div>
           <p className="text-sm text-neutral-400 mb-6">
-            rho-bot is free to use. If you find it valuable, a monthly
-            contribution helps us keep improving it.
+            Get unlimited tasks, priority support, and never hit a quota wall.
           </p>
-
-          <div className="flex items-center gap-4 mb-6">
-            <div className="flex items-baseline gap-1">
-              <span className="text-lg text-neutral-400">$</span>
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={amount}
-                onChange={(e) => setAmount(Math.max(1, Number(e.target.value)))}
-                className="w-20 text-3xl font-bold text-neutral-100 bg-transparent border-b-2 border-neutral-700 focus:border-rho-500 outline-none text-center appearance-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-              />
-              <span className="text-sm text-neutral-500">/ month</span>
-            </div>
-
-            <div className="flex gap-2">
-              {[5, 10, 25].map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setAmount(v)}
-                  className={cn(
-                    "px-3 py-1.5 text-sm rounded-lg transition-colors",
-                    amount === v
-                      ? "bg-rho-600 text-white"
-                      : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700"
-                  )}
-                >
-                  ${v}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <button
             onClick={handleCheckout}
-            disabled={checkoutLoading || amount <= 0}
+            disabled={checkoutLoading}
             className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-lg bg-rho-600 hover:bg-rho-700 text-white transition-colors disabled:opacity-50"
           >
             {checkoutLoading ? (
               <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
             ) : (
               <>
-                Support with ${amount}/mo
+                Upgrade to Pro — $12/mo
                 <ArrowRight className="w-3.5 h-3.5" />
               </>
             )}
@@ -168,8 +161,8 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* Manage existing subscription */}
-      {isSupporter && (
+      {/* Payment history for Pro users */}
+      {isPro && (
         <div>
           <h2 className="text-lg font-semibold mb-4">Payment History</h2>
           <div className="p-8 rounded-xl border border-neutral-800 bg-neutral-900/50 text-center">

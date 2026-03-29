@@ -64,7 +64,7 @@ export default function HomePage() {
           </div>
 
           <p className="mt-4 text-xs text-neutral-600">
-            No credit card required &middot; 50 free tasks per month
+            No credit card required &middot; 25 free tasks per month
           </p>
         </div>
       </section>
@@ -198,13 +198,13 @@ export default function HomePage() {
 
       {/* ── Pricing preview ── */}
       <section className="py-24 px-6">
-        <div className="mx-auto max-w-lg">
+        <div className="mx-auto max-w-3xl">
           <div className="text-center mb-12">
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight">
-              Pay What You Want
+              Simple, Fair Pricing
             </h2>
             <p className="mt-4 text-neutral-400 max-w-2xl mx-auto">
-              Full access to everything. No hidden fees, no per-token surprises.
+              Start free. Upgrade to Pro for unlimited tasks.
             </p>
           </div>
 
@@ -230,8 +230,7 @@ export default function HomePage() {
               Ready to automate?
             </h2>
             <p className="mt-4 text-neutral-400 max-w-lg mx-auto">
-              Join the early access and get 50 free tasks per month. No credit
-              card required.
+              Start with 25 free tasks per month. No credit card required.
             </p>
             <div className="mt-8">
               <Link

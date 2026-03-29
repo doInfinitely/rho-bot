@@ -1,18 +1,25 @@
 /**
- * Pay-what-you-want pricing for rho-bot.
+ * Two-tier subscription pricing for rho-bot.
+ * Free (25 tasks/mo) + Pro ($12/mo unlimited).
  */
 
-export const DEFAULT_AMOUNT = 5; // dollars
-export const MIN_AMOUNT = 0;
+export const FREE_TASKS = 25;
+export const PRO_PRICE = 12;
 
-export const FEATURES = [
-  "Unlimited tasks",
-  "Unlimited concurrent sessions",
-  "Unlimited session history",
-  "Priority execution speed",
+export const FREE_FEATURES = [
+  "25 tasks per month",
+  "Voice commands (TTS & STT)",
+  "Unlimited sessions",
   "API access",
-  "Custom task templates",
   "Community support",
+];
+
+export const PRO_FEATURES = [
+  "Unlimited tasks",
+  "Voice commands (TTS & STT)",
+  "Unlimited sessions",
+  "API access",
+  "Priority support",
 ];
 
 export const FAQ_ITEMS = [
@@ -22,9 +29,9 @@ export const FAQ_ITEMS = [
       "A task is a single goal-directed sequence — for example, 'book a flight to Paris' or 'fill out this spreadsheet row.' Multi-step tasks that involve many clicks and keystrokes still count as one task.",
   },
   {
-    question: "Can I really pay $0?",
+    question: "What happens when I hit 25 tasks?",
     answer:
-      "Yes. rho-bot is free to use. If you find it valuable, paying what you can helps us keep building and improving it.",
+      "You'll be prompted to upgrade to Pro. Your session history and settings are preserved — upgrading just unlocks unlimited tasks instantly.",
   },
   {
     question: "How does rho-bot compare to Anthropic's computer use?",
@@ -32,13 +39,13 @@ export const FAQ_ITEMS = [
       "Anthropic's computer use runs on their frontier LLMs, billing you per token for every screenshot and reasoning step. A single task can cost $0.50–$3.00+. rho-bot uses distilled, purpose-built models that are dramatically cheaper while being optimized specifically for desktop automation.",
   },
   {
-    question: "Can I change my amount later?",
+    question: "Can I cancel anytime?",
     answer:
-      "Yes. You can update your contribution at any time from your billing dashboard. Changes take effect on your next billing cycle.",
+      "Yes. You can cancel your Pro subscription at any time from your billing dashboard. You'll keep Pro access until the end of your billing period, then revert to the Free plan.",
   },
   {
-    question: "Is there a free trial?",
+    question: "Is there a free trial for Pro?",
     answer:
-      "You don't need one — the product is free to use. Pay what you want, when you want.",
+      "The Free plan is your trial — 25 tasks per month with full functionality including voice. Upgrade to Pro when you need more.",
   },
 ];

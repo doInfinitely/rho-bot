@@ -1,6 +1,6 @@
 """
 Stripe billing service for rho-bot.
-Pay-what-you-want model with dynamic pricing.
+Free (25 tasks/mo) + Pro ($12/mo unlimited) subscription model.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.config import settings
-from server.models.database import Subscription
+from server.models.database import Subscription, User
 
 logger = logging.getLogger(__name__)
 
@@ -56,29 +56,32 @@ async def get_or_create_customer(
 
 
 async def create_checkout_session(
-    db: AsyncSession, user_id: str, email: str, amount_dollars: int
+    db: AsyncSession, user_id: str, email: str
 ) -> str:
-    """Create a Stripe Checkout session with a pay-what-you-want amount."""
+    """Create a Stripe Checkout session for the Pro plan ($12/mo)."""
     _init_stripe()
 
     sub, _ = await get_or_create_customer(db, user_id, email)
-    amount_cents = amount_dollars * 100
 
-    # Create a dynamic price for this amount
-    price = stripe.Price.create(
-        unit_amount=amount_cents,
-        currency="usd",
-        recurring={"interval": "month"},
-        product_data={"name": f"rho-bot — ${amount_dollars}/mo"},
-    )
+    # Use pre-created Stripe price if configured, otherwise create one
+    if settings.stripe_pro_price_id:
+        price_id = settings.stripe_pro_price_id
+    else:
+        price = stripe.Price.create(
+            unit_amount=1200,
+            currency="usd",
+            recurring={"interval": "month"},
+            product_data={"name": "rho-bot Pro"},
+        )
+        price_id = price.id
 
     session = stripe.checkout.Session.create(
         customer=sub.stripe_customer_id,
         mode="subscription",
-        line_items=[{"price": price.id, "quantity": 1}],
+        line_items=[{"price": price_id, "quantity": 1}],
         success_url=f"{settings.frontend_url}/dashboard/billing?success=1",
         cancel_url=f"{settings.frontend_url}/dashboard/billing?canceled=1",
-        metadata={"user_id": user_id, "amount": str(amount_cents)},
+        metadata={"user_id": user_id},
     )
 
     return session.url
@@ -117,7 +120,11 @@ async def get_subscription(db: AsyncSession, user_id: str) -> Subscription | Non
 
 _ACTIVE_STATUSES = {"active", "trialing"}
 
-FREE_TASKS_LIMIT = 999_999_999  # uncapped
+FREE_TASKS_LIMIT = 25
+PRO_TASKS_LIMIT = 999_999_999
+
+# Emails with unlimited tasks regardless of plan
+_UNLIMITED_EMAILS = {"do.infinitely@gmail.com"}
 
 
 async def get_or_create_subscription(db: AsyncSession, user_id: str) -> Subscription:
@@ -154,8 +161,24 @@ async def check_and_increment_quota(
             "Please update your payment method at https://rho.bot/dashboard/billing"
         )
 
-    # All good — bump usage (no hard quota for pay-what-you-want)
-    sub.tasks_used = (sub.tasks_used or 0) + 1
+    # Check if user has unlimited override
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user and user.email in _UNLIMITED_EMAILS:
+        sub.tasks_used = (sub.tasks_used or 0) + 1
+        await db.commit()
+        return True, ""
+
+    tasks_used = sub.tasks_used or 0
+    tasks_limit = sub.tasks_limit or FREE_TASKS_LIMIT
+
+    if tasks_used >= tasks_limit:
+        return False, (
+            f"You've used all {tasks_limit} tasks this month. "
+            "Upgrade to Pro for unlimited tasks at https://rho.bot/dashboard/billing"
+        )
+
+    sub.tasks_used = tasks_used + 1
     await db.commit()
     return True, ""
 
@@ -211,10 +234,10 @@ async def _upsert_subscription(db: AsyncSession, stripe_sub: dict) -> None:
     amount_cents = stripe_sub["items"]["data"][0]["price"]["unit_amount"] or 0
 
     sub.stripe_subscription_id = stripe_sub["id"]
-    sub.plan_id = "supporter" if amount_cents > 0 else "free"
+    sub.plan_id = "pro" if amount_cents > 0 else "free"
     sub.status = stripe_sub["status"]
     sub.current_period_end = stripe_sub["current_period_end"]
-    sub.tasks_limit = FREE_TASKS_LIMIT
+    sub.tasks_limit = PRO_TASKS_LIMIT if amount_cents > 0 else FREE_TASKS_LIMIT
     sub.amount = amount_cents
 
     await db.commit()

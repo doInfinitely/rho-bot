@@ -115,12 +115,9 @@ export async function getSubscription(): Promise<Subscription> {
   return request<Subscription>("/api/billing/subscription");
 }
 
-export async function createCheckoutSession(
-  amount: number
-): Promise<{ url: string }> {
+export async function createCheckoutSession(): Promise<{ url: string }> {
   return request<{ url: string }>("/api/billing/checkout", {
     method: "POST",
-    body: JSON.stringify({ amount }),
   });
 }
 

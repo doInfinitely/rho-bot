@@ -12,7 +12,6 @@ from server.config import settings
 from server.deps import get_current_user
 from server.models.database import User, get_db
 from server.schemas.billing import (
-    CheckoutRequest,
     CheckoutResponse,
     PortalResponse,
     SubscriptionOut,
@@ -43,7 +42,7 @@ async def subscription_info(
             plan_name="Free",
             status="active",
             tasks_used=0,
-            tasks_limit=999_999_999,
+            tasks_limit=25,
             amount=0,
         )
 
@@ -61,19 +60,12 @@ async def subscription_info(
 
 @router.post("/checkout", response_model=CheckoutResponse)
 async def checkout(
-    body: CheckoutRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a Stripe Checkout session for a pay-what-you-want amount."""
-    if body.amount <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Amount must be greater than $0 to set up a subscription.",
-        )
-
+    """Create a Stripe Checkout session for Pro ($12/mo)."""
     try:
-        url = await create_checkout_session(db, user.id, user.email, body.amount)
+        url = await create_checkout_session(db, user.id, user.email)
     except Exception as e:
         logger.error(f"Checkout error: {e}")
         raise HTTPException(

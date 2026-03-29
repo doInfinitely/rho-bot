@@ -21,17 +21,17 @@ export default function PricingPage() {
 
         <div className="relative mx-auto max-w-4xl text-center">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
-            Pay What You Want
+            Simple Pricing
           </h1>
           <p className="mt-4 text-lg text-neutral-400 max-w-2xl mx-auto">
-            Full access to everything. Pay what it's worth to you.
+            Start free with 25 tasks per month. Upgrade to Pro for unlimited.
           </p>
         </div>
       </section>
 
-      {/* ── Pricing card ── */}
+      {/* ── Pricing cards ── */}
       <section className="px-6 pb-24">
-        <div className="mx-auto max-w-lg">
+        <div className="mx-auto max-w-3xl">
           <PricingCard />
         </div>
       </section>
@@ -83,11 +83,11 @@ export default function PricingPage() {
             <div className="p-6 rounded-xl border border-rho-500/40 bg-rho-950/20">
               <h3 className="font-semibold text-neutral-200 mb-1">rho-bot</h3>
               <p className="text-xs text-neutral-500 mb-4">
-                Pay what you want — distilled models
+                Free tier + $12/mo Pro — distilled models
               </p>
-              <div className="text-3xl font-bold text-rho-400">$0+</div>
+              <div className="text-3xl font-bold text-rho-400">$0 / $12</div>
               <p className="text-xs text-neutral-500 mt-1">
-                / month — you decide
+                / month — free or unlimited
               </p>
             </div>
           </div>
@@ -151,7 +151,7 @@ export default function PricingPage() {
               Start automating today
             </h2>
             <p className="mt-4 text-neutral-400 max-w-lg mx-auto">
-              Free to use. Pay what you want when you're ready.
+              25 free tasks per month. Upgrade to Pro when you need more.
             </p>
             <div className="mt-8">
               <Link

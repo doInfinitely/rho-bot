@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class SubscriptionOut(BaseModel):
@@ -15,10 +15,6 @@ class SubscriptionOut(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class CheckoutRequest(BaseModel):
-    amount: int = Field(ge=0, description="Monthly amount in whole dollars")
 
 
 class CheckoutResponse(BaseModel):
